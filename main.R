@@ -4,9 +4,10 @@
 weather_prediction <- function(df, x, y, seas, year, lag=6, norm=T, split=0.7){
   df <- df[, append(x, y)]
   if(norm==T){df <- scale(df[, x])}
-  df_split <- train_test(df, split)
-  df_split$x_train <- delay_map(df_split$x_train, lag)
-  # pick RVs from delay map, num = length(x)?
+  df <- train_test(df, split)
+  df$x_train <- delay_map(df$x_train, lag)
+  df$y_train <- delay_map(df$y_train, lag)
+  nums <- random_nums(length(x), 1000, ncol(df$x_train)) # find n= samples for each season of each year
   # nearest neighbor, lars
   # prob distribution
 }
@@ -32,4 +33,14 @@ delay_map <- function(df, lag){
   }
   df <- df[lag:(nrow(df)-lag), ]
   return(df)
+}
+
+# picks x random values n times from 1:k
+random_nums <- function(x, n, k){
+  nums <- NULL
+  for(i in 1:n){
+    sample <- sample(c(1:k), x)
+    nums <- rbind(nums, sample)
+  }
+  return(nums)
 }
