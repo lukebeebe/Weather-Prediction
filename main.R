@@ -1,20 +1,25 @@
 # Weather Prediction by Luke, Kavi
 
+# df with 7 rows of random ints 0:5 1000 times
+data_fake <- data.frame(replicate(7,sample(0:5,1000,rep=TRUE)))
+
 # main
-weather_prediction <- function(df, x, y, seas, year, lag=6, norm=T, split=0.7){
+weather_prediction <- function(df, x, y, seas, year, lag=6, norm=F, split=0.7){
   df <- df[, append(x, y)]
   if(norm==T){df <- scale(df[, x])}
   df <- train_test(df, split)
   df$x_train <- delay_map(df$x_train, lag)
-  df$y_train <- delay_map(df$y_train, lag)
-  nums <- random_nums(length(x), 1000, ncol(df$x_train)) # find n= samples for each season of each year
+  print(tail(df$x_train))
+  df$x_test <- delay_map(df$x_test, lag)
+  nums <- random_nums(length(x), 1000, nrow(df$x_train)) # find correct number of samples to optimize
+  # turn nums into values for next step <- write into random_nums function?
   # nearest neighbor, lars
   # prob distribution
 }
 
 # splits data
 train_test <- function(df, split){
-  sample <- sample(c(TRUE, FALSE), nrow(df), replace=F, prob=c(split,1-split))
+  sample <- sample(c(T, F), nrow(df), replace=T, prob=c(split,1-split))
   y <- ncol(df)
   x_train <- df[sample, -y]
   y_train <- df[sample, y]
@@ -29,9 +34,11 @@ delay_map <- function(df, lag){
   delay <- df
   for(i in 1:lag){
     delay <- rbind(0, delay)
+    delay <- delay[-nrow(delay),]
     df <- cbind(df, delay)
   }
-  df <- df[lag:(nrow(df)-lag), ]
+  rownames(df) <- colnames(df) <- NULL
+  df <- df[lag+1:(nrow(df)-lag), ]
   return(df)
 }
 
@@ -39,8 +46,11 @@ delay_map <- function(df, lag){
 random_nums <- function(x, n, k){
   nums <- NULL
   for(i in 1:n){
-    sample <- sample(c(1:k), x)
+    sample <- sample(1:k, x, replace=T)
     nums <- rbind(nums, sample)
   }
+  rownames(nums) <- NULL
   return(nums)
 }
+
+weather_prediction(data_fake, x=1:6, y=7, seas=4, year=1, lag=6, norm=F, split=0.7)
