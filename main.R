@@ -11,6 +11,7 @@ weather_prediction <- function(df, x, y, seas, year, lag=6, norm=F, split=0.7){
   df$x_train <- delay_map(df$x_train, lag)
   df$x_test <- delay_map(df$x_test, lag)
   nums <- random_nums(length(x), 1000, nrow(df$x_train)) # find correct number of samples to optimize
+  # seperate seasons
   # turn nums into values for next step <- write into random_nums function?
   # nearest neighbor, lars
   # prob distribution
