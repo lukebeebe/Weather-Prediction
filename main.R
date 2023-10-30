@@ -17,11 +17,10 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, norm=F, split=0.7)
   df_test <- df[split+1:nrow(df),]
 
   # calculate attractor dimension, runs on LuValle's code
-  dim <- dim.est.calc(rev(df_test))
-  print(dim)
+  # dim <- 2.5*dim.est.calc(rev(df_test))
+  # print(dim/2.5)
   
-  nsel <- ceiling(2.5*dim)
-  delay_maps <- disjoint.delaymap.make1(1200, ncol(df_train), nsel)
+  delay_sample <- delay_sample(1200, ncol(df_train), dim)
   
   
   # seperate seasons
@@ -34,6 +33,7 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, norm=F, split=0.7)
 delay_map <- function(df, lag){
   delay <- df
   names <- colnames(delay)
+  colnames(df) <- paste(as.character(0), names, sep = "")
   for(i in 1:lag){
     colnames(delay) <- paste(as.character(i), names, sep = "")
     delay <- rbind(0, delay)
@@ -41,15 +41,16 @@ delay_map <- function(df, lag){
     df <- cbind(df, delay)
   }
   df <- df[lag+1:(nrow(df)-lag), ]
+  print(df)
   return(df)
 }
 
-<- function(ntrial, ncol, nsel){
-  for(i in 1:ntrial){ #gives ntrial samples
-    nums <- sample(2:ncol, replace=F)
-    for(j in 1:nmid-1){
-      selvec <- (j-1)*nsel
-    }
+#LOOK OVER
+
+delay_sample <- function(ntrial, ncol, nsel){
+  nums <- list()
+  for(i in 1:ntrial){
+    nums <- append(nums, sample(c(2:ncol), nsel))
   }
 }
 
