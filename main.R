@@ -3,54 +3,54 @@
 # df with 7 rows of random ints 0:5 1000 times
 data_fake <- data.frame(replicate(7,sample(0:5,1000,rep=TRUE)))
 
+# clean data before
+
 # main
-weather_prediction <- function(df, x, y, seas, year, lag=6, norm=F, split=0.7){
-  df <- df[, append(x, y)]
+weather_prediction <- function(data, x, y, seas, year, lag=6, norm=F, split=0.7){
+  df <- data[, append(x, y)]
   if(norm==T){df <- scale(df[, x])}
-  df <- train_test(df, split)
-  df$x_train <- delay_map(df$x_train, lag)
-  df$x_test <- delay_map(df$x_test, lag)
-  nums <- random_nums(length(x), 1000, nrow(df$x_train)) # find correct number of samples to optimize
+  df <- delay_map(df, lag)
+  
+  # split data
+  split <- floor(split*nrow(df))
+  df_train <- df[1:split,]
+  df_test <- df[split+1:nrow(df),]
+
+  # calculate attractor dimension, runs on LuValle's code
+  dim <- dim.est.calc(rev(df_test))
+  print(dim)
+  
+  nsel <- ceiling(2.5*dim)
+  delay_maps <- disjoint.delaymap.make1(1200, ncol(df_train), nsel)
+  
+  
   # seperate seasons
   # turn nums into values for next step <- write into random_nums function?
   # nearest neighbor, lars
   # prob distribution
 }
 
-# splits data
-train_test <- function(df, split){
-  sample <- sample(c(T, F), nrow(df), replace=T, prob=c(split,1-split))
-  y <- ncol(df)
-  x_train <- df[sample, -y]
-  y_train <- df[sample, y]
-  x_test <- df[!sample, -y]
-  y_test <- df[!sample, y]
-  my_list <- list(x_train=x_train, y_train=y_train, x_test=x_test, y_test=y_test)
-  return(my_list)
-}
-
 # makes delay map
 delay_map <- function(df, lag){
   delay <- df
+  names <- colnames(delay)
   for(i in 1:lag){
+    colnames(delay) <- paste(as.character(i), names, sep = "")
     delay <- rbind(0, delay)
     delay <- delay[-nrow(delay),]
     df <- cbind(df, delay)
   }
-  rownames(df) <- colnames(df) <- NULL
   df <- df[lag+1:(nrow(df)-lag), ]
   return(df)
 }
 
-# picks x random values n times from 1:k
-random_nums <- function(x, n, k){
-  nums <- NULL
-  for(i in 1:n){
-    sample <- sample(1:k, x, replace=T)
-    nums <- rbind(nums, sample)
+<- function(ntrial, ncol, nsel){
+  for(i in 1:ntrial){ #gives ntrial samples
+    nums <- sample(2:ncol, replace=F)
+    for(j in 1:nmid-1){
+      selvec <- (j-1)*nsel
+    }
   }
-  rownames(nums) <- NULL
-  return(nums)
 }
 
 weather_prediction(data_fake, x=1:6, y=7, seas=4, year=1, lag=6, norm=F, split=0.7)
