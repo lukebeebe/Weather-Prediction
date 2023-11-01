@@ -20,11 +20,22 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, norm=F, split=0.7)
   # dim <- 2.5*dim.est.calc(rev(df_test))
   # print(dim/2.5)
   
-  delay_sample <- delay_sample(1200, ncol(df_train), dim)
-  
+  # random samples to pull from columns
+  delay_sample <- delay_sample(1200, ncol(df_train), 7)
   
   # seperate seasons
-  # turn nums into values for next step <- write into random_nums function?
+  season1_train <- df_train[seq(1, nrow(df_train), 4), ]
+  season2_train <- df_train[seq(2, nrow(df_train), 4), ]
+  season3_train <- df_train[seq(3, nrow(df_train), 4), ]
+  season4_train <- df_train[seq(4, nrow(df_train), 4), ]
+  
+  season1_test <- df_test[seq(1, nrow(df_train), 4), ]
+  season2_test <- df_test[seq(2, nrow(df_train), 4), ]
+  season3_test <- df_test[seq(3, nrow(df_train), 4), ]
+  season4_test <- df_test[seq(4, nrow(df_train), 4), ]
+  
+  
+  
   # nearest neighbor, lars
   # prob distribution
 }
@@ -41,17 +52,18 @@ delay_map <- function(df, lag){
     df <- cbind(df, delay)
   }
   df <- df[lag+1:(nrow(df)-lag), ]
-  print(df)
   return(df)
 }
 
-#LOOK OVER
-
-delay_sample <- function(ntrial, ncol, nsel){
+# nsel samples of ncol values, ntrial times
+delay_sample <- function(ntrial=1200, ncol, nsel){
   nums <- list()
   for(i in 1:ntrial){
-    nums <- append(nums, sample(c(2:ncol), nsel))
+    sample <- sample(1:ncol, nsel)
+    nums[[i]] <- sample
   }
+  return(nums)
 }
 
 weather_prediction(data_fake, x=1:6, y=7, seas=4, year=1, lag=6, norm=F, split=0.7)
+
