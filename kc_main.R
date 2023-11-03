@@ -4,6 +4,7 @@ source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/datamak
 source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/maketable.pck")
 source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/reproduce.pck")
 library(dplyr)
+library(lars)
 
 # main
 weather_prediction <- function(df, x, y, seas, year, lags=6, norm=F, split=0.7){
@@ -95,7 +96,16 @@ disjoint.delaymap.make2 <-
     }
     outlist
   }
-  
+
+#Questions for LuValle:
+  #1.) is the nearest neighbors generated on the test data? does this make sense
+      # verify each model generated using training data with diff combos of vars and nearest neighbors on test
+      # data
+  #2.) how are nearest neighbors found? euclidean distance in dist matrix?
+  #3.) why the 1/sqrt(sd) weight to data. should it just be sd?
+  #4.) how are residuals calculated?
+       # - y g
+  #5.) how to store lists of nums
 
 output <- weather_prediction(data_fake, x=2:7, y=1, seas=1, year=1, lag=6, norm=F, split=0.7)
 
@@ -108,7 +118,6 @@ output <- weather_prediction(data_fake, x=2:7, y=1, seas=1, year=1, lag=6, norm=
 #as.matrix(obj_pred1) %*% as.matrix(DI)
 
 #DI <- diag(1/sqrt(apply(obj_pred1,2,sd)))
-
 #sample distance matrix
 #dist0<-as.matrix(dist(rbind(as.matrix(obj_pred2)%*%as.matrix(DI),as.matrix(obj_pred1)%*%as.matrix(DI))))
 
@@ -116,33 +125,14 @@ obj_train <- output[[1]]
 DI <- diag(1/sqrt(apply(obj_train, 2, sd)))
 dist0 <- as.matrix(dist(as.matrix(obj_train)%*%as.matrix(DI)))
 
-nnvec <- c()
-for(i in 1:1){
-  distmat <- dist0[,-i]
-  mindist <- 2147483647
-  minid <- 0
-  
-  for(k in 1:30){
-    if(length(nnvec)>0){
-      distmat2 <- distmat[,-nnvec]
-    }
-      
-    for(j in 1:ncol(dist0)){
-      if(dist0[i,j]<mindist){
-        mindist = dist0[i, j]
-      }
-    }
-    print(j)
-    nnvec <- append(nnvec, minid)
-  }
-}
+nearest_neighbor_amount <- 30
+nnvec_mat <- matrix(, nrow=nrow(dist0), ncol=nearest_neighbor_amount)
 
-nnvec_list <- list()
 for(i in 1:nrow(dist0)){
   nnvec <- c()
   minid <- 0
 
-  for(j in 1:30){
+  for(j in 1:nearest_neighbor_amount){
     mindist <- .Machine$integer.max
 
     for(k in 1:ncol(dist0)){
@@ -159,8 +149,37 @@ for(i in 1:nrow(dist0)){
     }
     nnvec <- append(nnvec, minid)
   }
-  nnvec_list <- append(nnvec_list, nnvec)
+  nnvec_mat[i,] <- nnvec
 }
+nnvec_mat <- cbind(1:nrow(nnvec_mat), nnvec_mat)
+
+#testing lasso func
+df_train_y <- obj_train[,1]
+df_train_x <- obj_train[,-1]
+
+df_train_x_reg <- df_train_x[, delay_maps[[1]]-1]
+
+df_train_x_reg <- as.matrix(df_train_x_reg[nnvec_mat[1,],])
+df_train_y_reg <- df_train_y[nnvec_mat[i,]]
+strloc <- lars(df_train_x_reg,df_train_y_reg)
+summary(strloc)
+
+
+
+
+#running lasso regression
+for(i in 1:1){
+  
+  df_train_reg <- obj_train[,c(1,delay_maps[[i]])]
+  
+  for(j in 1:nrow(nnvec_mat)){
+    
+    nnvec_reg <- nnvec_mat[1,]
+    df_train_reg <- df_train_reg[nnvec_reg, ]
+    
+  }
+}
+
 
 #output <- delay_map_creator(data_fake, lags=6)
 #output <- rev(output)
