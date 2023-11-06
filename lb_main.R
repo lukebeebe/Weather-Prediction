@@ -21,7 +21,7 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, norm=F, split=0.7)
   # print(dim/2.5)
   
   # random samples to pull from columns
-  delay_sample <- delay_sample(1200, ncol(df_train), 7)
+  delay_sample <- delay_sample(1200, ncol(df_train), 7) # SAMPLE FROM nn_cols BEFORE LARS?
   
   # seperate seasons
   season_train <- df_train[seq(seas, nrow(df_train), 4), ]
