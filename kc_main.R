@@ -27,8 +27,8 @@ weather_prediction <- function(df, x, y, seas, year, lags=6, norm=F, split=0.7){
   
   #get delay maps 
   nsel<-ceiling(2.5*dim)
-  delay_maps<-disjoint.delaymap.make2(1200,42,nsel)
-  
+  delay_maps<-disjoint.delaymap.make2(15,42,nsel)
+
   #determines which season is the first obs given amount of lags
   season <- case_when(
     (lags - 1)/4==1 ~ '1',
@@ -46,8 +46,20 @@ weather_prediction <- function(df, x, y, seas, year, lags=6, norm=F, split=0.7){
   season3df_train <- df_train[seq(3, nrow(df), 4), ]
   season4df_train <- df_train[seq(4, nrow(df), 4), ]
   
-  return(list(df_train = df_train, df_test = df_test, delaymaps = delay_maps))
+  #conduct the regression 
+  lars_pred_list <- cp.lars.reg(df_train, df_test, delay_maps, 30, 30)
+  
+  #get residuals for each neighborhood within each delay map
+  df_test_outofsample <- df_test[((nrow(df_train)+1):nrow(df_test)),]
+
+  residlist <- resid.list(df_train, df_test_outofsample, lars_pred_list, delay_maps)
+  
+  return(list(df_train = df_train, df_test = df_test, delaymaps = delay_maps, lars_pred_list=lars_pred_list, residlist = residlist))
 }
+
+
+######################################################################################################
+#delay.map.creator
 
 delay.map.creator <- function(df, lags){
   df_lagged <- df
@@ -65,6 +77,10 @@ delay.map.creator <- function(df, lags){
   }
   return(df_lagged)
 }
+
+
+######################################################################################################
+#disjoint.delaymap.make2
 
 disjoint.delaymap.make2 <-
   function(ntrial, ncol, nsel)
@@ -97,37 +113,161 @@ disjoint.delaymap.make2 <-
     outlist
   }
 
-#Questions for LuValle:
-  #1.) is the nearest neighbors generated on the test data? does this make sense
-      # verify each model generated using training data with diff combos of vars and nearest neighbors on test
-      # data
-  #2.) how are nearest neighbors found? euclidean distance in dist matrix?
-  #3.) why the 1/sqrt(sd) weight to data. should it just be sd?
-  #4.) how are residuals calculated?
-       # - y g
-  #5.) how to store lists of nums
 
+######################################################################################################
+#cp.lars.reg
+
+cp.lars.reg <- function(df_train, df_test, delay_maps, nn_amount, delaymap_num){
+  
+  ### Find nearest neighbors:
+  nnvec_mat <- nn.finder(df_train, nn_amount)
+  print(nnvec_mat)
+  
+  
+  #### Find each path in the LARs Regression
+  delay_map_paths_list <- list()
+  
+  for(i in 1:delaymap_num){
+    df_train_y <- df_train[,1]
+    df_train_x <- df_train[, -1]
+    df_train_x_reg <- df_train_x[, delay_maps[[i]]-1]
+    
+    output <- lars.reg(df_train_x_reg, df_train_y, nnvec_mat)
+    delay_map_paths_list <- append(delay_map_paths_list, list(output))
+    
+  }
+  
+  return(list(delay_map_paths_list))
+}
+
+
+######################################################################################################
+#nn.finder
+
+nn.finder <- function(df, nn_amount){
+  DI <- diag(1/(apply(df, 2, sd)))
+  dist0 <- as.matrix(dist(as.matrix(df)%*%as.matrix(DI)))
+  
+  nnvec_mat <- matrix(, nrow=nrow(dist0), ncol=nn_amount)
+  
+  for(i in 1:nrow(dist0)){
+    nnvec <- c()
+    minid <- 0
+    
+    for(j in 1:nn_amount){
+      mindist <- .Machine$integer.max
+      
+      for(k in 1:ncol(dist0)){
+        if(k!=i){
+          if(!(k %in% nnvec)==TRUE){
+            
+            if(mindist > dist0[i, k]){
+              
+              mindist = dist0[i, k]
+              minid <- k
+            }
+          }
+        }
+      }
+      nnvec <- append(nnvec, minid)
+    }
+    nnvec_mat[i,] <- nnvec
+  }
+  nnvec_mat <- cbind(1:nrow(nnvec_mat), nnvec_mat)
+  
+  return(nnvec_mat)
+}
+
+
+######################################################################################################
+#lars.reg
+
+lars.reg <- function(df_train_x, df_train_y, nnvec_mat){
+  #using df_train with only variables of a certain delay map selected
+  #for each set of nearest neighbors, create a model
+  
+  lars_model_list <- list()
+  
+  for(i in 1:nrow(df_train_x)){
+    #take only nearest neighbor rows in training data
+    df_train_x_reg <- as.matrix(df_train_x[nnvec_mat[i,],])
+    df_train_y_reg <- as.matrix(df_train_y[nnvec_mat[i,]])
+    
+    #lars regression
+    strloc <- lars(df_train_x_reg, df_train_y_reg)
+    Iloc<-(strloc$Cp==min(strloc$Cp))
+    s1loc<-(c(1:length(Iloc))[Iloc])[1]
+    
+    lars_mod <- list(strloc, s1loc)
+    lars_model_list <- append(lars_model_list, list(lars_mod))
+  }
+  return(lars_model_list)
+}
+
+######################################################################################################
+#resid.list
+
+resid.list <- function(df_train, df_test, chaos_model_list, delay_maps){
+  
+  resid_list <- list()
+  
+  for(i in 1:length(chaos_model_list[[1]])){
+    xmat_fit <- df_test[, delay_maps[[i]]]
+    delaymap_models <- chaos_model_list[[1]][[i]]
+
+    delaymap_residlist <- list()
+    
+    for(j in 1:length(delaymap_models)){
+       model_list <- delaymap_models[[j]]
+       model <- model_list[[1]]
+       bestmodel <- model_list[[2]]
+
+       print(length(model))
+       print(bestmodel)
+       ypred <- predict(model,xmat_fit,bestmodel)$fit
+       resid <- df_test[1] - ypred
+    
+       delaymap_residlist <- append(delaymap_residlist, list(resid))
+    }
+    resid_list <- append(resid_list, list(delaymap_residlist))
+  }
+  
+  return(resid_list)
+}
+
+
+################################################################################
+# run code below 
+################################################################################
 output <- weather_prediction(data_fake, x=2:7, y=1, seas=1, year=1, lag=6, norm=F, split=0.7)
+x1 <- output[[1]]
+x2 <- output[[2]]
+x3 <- output[[3]]
+x4 <- output[[4]]
+x4 <- output[[5]]
 
-#
-#obj_train <- output[[1]]
-#obj_test <- output[[2]]
-#obj_pred1 <- obj_train[,-1]
-#obj_pred2 <- obj_test[,-1]
 
-#as.matrix(obj_pred1) %*% as.matrix(DI)
+################################################################################
+#ignore everything below here
+################################################################################
 
-#DI <- diag(1/sqrt(apply(obj_pred1,2,sd)))
-#sample distance matrix
-#dist0<-as.matrix(dist(rbind(as.matrix(obj_pred2)%*%as.matrix(DI),as.matrix(obj_pred1)%*%as.matrix(DI))))
+df_test_outofsample <- x2[((nrow(x1)+1):nrow(x2)),]
+xmat_fit <- df_test_outofsample[, x3[[2]]]
 
-obj_train <- output[[1]]
-DI <- diag(1/sqrt(apply(obj_train, 2, sd)))
-dist0 <- as.matrix(dist(as.matrix(obj_train)%*%as.matrix(DI)))
+delaymap_models <- x4[[1]][[2]]
 
-nearest_neighbor_amount <- 30
-nnvec_mat <- matrix(, nrow=nrow(dist0), ncol=nearest_neighbor_amount)
+for(i in 1:length(delaymap_models)){
+  model_list <- delaymap_models[[i]]
+  model <- model_list[[1]]
+  bestmodel <- model_list[[2]]
+  
+  ypred <- predict(model,xmat_fit,bestmodel)$fit
+  resid <- df_test_outofsample[1] - ypred 
+  
+}
 
+
+#Determine nearest neighbors for each training observation:
 for(i in 1:nrow(dist0)){
   nnvec <- c()
   minid <- 0
@@ -153,36 +293,66 @@ for(i in 1:nrow(dist0)){
 }
 nnvec_mat <- cbind(1:nrow(nnvec_mat), nnvec_mat)
 
-#testing lasso func
-df_train_y <- obj_train[,1]
-df_train_x <- obj_train[,-1]
+DI <- diag(1/(apply(df_train, 2, sd)))
+dist0 <- as.matrix(dist(as.matrix(obj_train)%*%as.matrix(DI)))
 
-df_train_x_reg <- df_train_x[, delay_maps[[1]]-1]
+nnvec_mat <- matrix(, nrow=nrow(dist0), ncol=nn_amount)
 
-df_train_x_reg <- as.matrix(df_train_x_reg[nnvec_mat[1,],])
-df_train_y_reg <- df_train_y[nnvec_mat[i,]]
-strloc <- lars(df_train_x_reg,df_train_y_reg)
-summary(strloc)
-
-
-
-
-#running lasso regression
-for(i in 1:1){
+for(i in 1:nrow(dist0)){
+  nnvec <- c()
+  minid <- 0
   
-  df_train_reg <- obj_train[,c(1,delay_maps[[i]])]
-  
-  for(j in 1:nrow(nnvec_mat)){
+  for(j in 1:nn_amount){
+    mindist <- .Machine$integer.max
     
-    nnvec_reg <- nnvec_mat[1,]
-    df_train_reg <- df_train_reg[nnvec_reg, ]
-    
+    for(k in 1:ncol(dist0)){
+      if(k!=i){
+        if(!(k %in% nnvec)==TRUE){
+          
+          if(mindist > dist0[i, k]){
+            
+            mindist = dist0[i, k]
+            minid <- k
+          }
+        }
+      }
+    }
+    nnvec <- append(nnvec, minid)
   }
+  nnvec_mat[i,] <- nnvec
 }
-
+nnvec_mat <- cbind(1:nrow(nnvec_mat), nnvec_mat) # <- matrix of nearest neighbors for each observation
 
 #output <- delay_map_creator(data_fake, lags=6)
 #output <- rev(output)
 #output <- na.omit(output)
 #dim.est.calc(output)
 
+#
+#obj_train <- output[[1]]
+#obj_test <- output[[2]]
+#obj_pred1 <- obj_train[,-1]
+#obj_pred2 <- obj_test[,-1]
+
+#as.matrix(obj_pred1) %*% as.matrix(DI)
+
+#DI <- diag(1/sqrt(apply(obj_pred1,2,sd)))
+#sample distance matrix
+#dist0<-as.matrix(dist(rbind(as.matrix(obj_pred2)%*%as.matrix(DI),as.matrix(obj_pred1)%*%as.matrix(DI))))
+
+
+#testing lasso func
+#df_train_y <- obj_train[,1]
+#df_train_x <- obj_train[,-1]
+
+#df_train_x_reg <- df_train_x[, delay_maps[[1]]-1]
+
+#df_train_x_reg <- as.matrix(df_train_x_reg[nnvec_mat[1,],])
+#df_train_y_reg <- df_train_y[nnvec_mat[i,]]
+#strloc <- lars(df_train_x_reg,df_train_y_reg)
+#strloc$coeff
+
+#yp1loc<-predict(strloc,rbind(xmat.pred[i,],xmat.fit),s1loc)$fit[1]
+#yploc<-predict(strloc,df_train_x_reg,s1loc)$fit
+
+#obj <- list(strloc, strloc)
