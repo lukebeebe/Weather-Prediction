@@ -24,19 +24,13 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, norm=F, split=0.7)
   delay_sample <- delay_sample(1200, ncol(df_train), 7)
   
   # seperate seasons
-  season1_train <- df_train[seq(1, nrow(df_train), 4), ]
-  season2_train <- df_train[seq(2, nrow(df_train), 4), ]
-  season3_train <- df_train[seq(3, nrow(df_train), 4), ]
-  season4_train <- df_train[seq(4, nrow(df_train), 4), ]
+  season_train <- df_train[seq(seas, nrow(df_train), 4), ]
+  season_test <- df_test[seq(seas, nrow(df_train), 4), ]
   
-  season1_test <- df_test[seq(1, nrow(df_train), 4), ]
-  season2_test <- df_test[seq(2, nrow(df_train), 4), ]
-  season3_test <- df_test[seq(3, nrow(df_train), 4), ]
-  season4_test <- df_test[seq(4, nrow(df_train), 4), ]
+  # distance matrix
+  nn_cols <- dist_matrix(season_train, season_test, year)
   
-  
-  
-  # nearest neighbor, lars
+  # lars
   # prob distribution
 }
 
@@ -63,6 +57,16 @@ delay_sample <- function(ntrial=1200, ncol, nsel){
     nums[[i]] <- sample
   }
   return(nums)
+}
+
+dist_matrix <- function(x, y, year, nn=30){
+  x <- scale(x)
+  y <- scale(y)
+  y <- y[year,]
+  df <- rbind(y, x)
+  y_dist <- as.matrix(dist(df))[,1]
+  nn_cols <- order(y_dist)[2:nn]
+  return(nn_cols)
 }
 
 weather_prediction(data_fake, x=1:6, y=7, seas=4, year=1, lag=6, norm=F, split=0.7)
