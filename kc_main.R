@@ -52,14 +52,15 @@ weather_prediction <- function(df, x, y, seas, year, lags=6, norm=F, split=0.7){
   #get residuals for each neighborhood within each delay map
   df_test_outofsample <- df_test[((nrow(df_train)+1):nrow(df_test)),]
 
-  residlist <- resid.list(df_train, df_test_outofsample, lars_pred_list, delay_maps)
+  #residlist <- resid.list(df_train, df_test_outofsample, lars_pred_list, delay_maps)
   
-  return(list(df_train = df_train, df_test = df_test, delaymaps = delay_maps, lars_pred_list=lars_pred_list, residlist = residlist))
+  return(list(df_train = df_train, df_test = df_test, delaymaps = delay_maps, lars_pred_list=lars_pred_list))
 }
 
 
 ######################################################################################################
 #delay.map.creator
+#creates a specified amount of lags for each variable and assigns a appropriate var name
 
 delay.map.creator <- function(df, lags){
   df_lagged <- df
@@ -81,6 +82,8 @@ delay.map.creator <- function(df, lags){
 
 ######################################################################################################
 #disjoint.delaymap.make2
+
+#code is the same as Dr. LuValle's
 
 disjoint.delaymap.make2 <-
   function(ntrial, ncol, nsel)
@@ -134,7 +137,6 @@ cp.lars.reg <- function(df_train, df_test, delay_maps, nn_amount, delaymap_num){
     
     output <- lars.reg(df_train_x_reg, df_train_y, nnvec_mat)
     delay_map_paths_list <- append(delay_map_paths_list, list(output))
-    
   }
   
   return(list(delay_map_paths_list))
@@ -145,18 +147,24 @@ cp.lars.reg <- function(df_train, df_test, delay_maps, nn_amount, delaymap_num){
 #nn.finder
 
 nn.finder <- function(df, nn_amount){
+  
+  #Divide x vars by sd and create distance matrix
   DI <- diag(1/(apply(df, 2, sd)))
   dist0 <- as.matrix(dist(as.matrix(df)%*%as.matrix(DI)))
   
+  #create distance mat
   nnvec_mat <- matrix(, nrow=nrow(dist0), ncol=nn_amount)
   
+  #for each obs, find the 30 nearest neighbors (smallest dist in dist matrix)
   for(i in 1:nrow(dist0)){
     nnvec <- c()
     minid <- 0
     
+    #loop for the size of the neighborhood (1:30 nearest neighbors, for example)
     for(j in 1:nn_amount){
       mindist <- .Machine$integer.max
       
+      #find obs with lowest distance, if not already in the vector of nearest neighbors (nnvec)
       for(k in 1:ncol(dist0)){
         if(k!=i){
           if(!(k %in% nnvec)==TRUE){
@@ -198,14 +206,26 @@ lars.reg <- function(df_train_x, df_train_y, nnvec_mat){
     Iloc<-(strloc$Cp==min(strloc$Cp))
     s1loc<-(c(1:length(Iloc))[Iloc])[1]
     
-    lars_mod <- list(strloc, s1loc)
+    #predictions w/ training data using the model on the nearest neighborhood 
+    df_train_x_reg_resid <- as.matrix(df_train_x[nnvec_mat[i,],])
+    ypredfull <- predict(strloc,df_train_x_reg_resid,s1loc)$fit
+    
+    #residuals for top n nearest neighbors in neighhborhood
+    df_train_x_reg_resid <- as.matrix(df_train_x[nnvec_mat[i,1:5],])
+    ypred <- predict(strloc,df_train_x_reg_resid,s1loc)$fit
+    resid <- df_train_y[nnvec_mat[i,1:5]] - ypred
+
+    #return list of model outputs
+    lars_mod <- list(strloc, s1loc, ypredfull, resid)
     lars_model_list <- append(lars_model_list, list(lars_mod))
+    
   }
   return(lars_model_list)
 }
 
 ######################################################################################################
 #resid.list
+#this function is not utilized as of right now, all residual calculations are in the previous function
 
 resid.list <- function(df_train, df_test, chaos_model_list, delay_maps){
   
@@ -222,8 +242,6 @@ resid.list <- function(df_train, df_test, chaos_model_list, delay_maps){
        model <- model_list[[1]]
        bestmodel <- model_list[[2]]
 
-       print(length(model))
-       print(bestmodel)
        ypred <- predict(model,xmat_fit,bestmodel)$fit
        resid <- df_test[1] - ypred
     
@@ -235,124 +253,39 @@ resid.list <- function(df_train, df_test, chaos_model_list, delay_maps){
   return(resid_list)
 }
 
+######################################################################################################
+
+
 
 ################################################################################
 # run code below 
 ################################################################################
 output <- weather_prediction(data_fake, x=2:7, y=1, seas=1, year=1, lag=6, norm=F, split=0.7)
-x1 <- output[[1]]
-x2 <- output[[2]]
-x3 <- output[[3]]
-x4 <- output[[4]]
-x4 <- output[[5]]
 
+#WIP - Histogram of nonparametric Density Function  
+model <- output[[4]][[1]] 
+density_vec <- c()
 
-################################################################################
-#ignore everything below here
-################################################################################
-
-df_test_outofsample <- x2[((nrow(x1)+1):nrow(x2)),]
-xmat_fit <- df_test_outofsample[, x3[[2]]]
-
-delaymap_models <- x4[[1]][[2]]
-
-for(i in 1:length(delaymap_models)){
-  model_list <- delaymap_models[[i]]
-  model <- model_list[[1]]
-  bestmodel <- model_list[[2]]
+for(i in 1:length(model)){
+  print(i)
   
-  ypred <- predict(model,xmat_fit,bestmodel)$fit
-  resid <- df_test_outofsample[1] - ypred 
-  
-}
-
-
-#Determine nearest neighbors for each training observation:
-for(i in 1:nrow(dist0)){
-  nnvec <- c()
-  minid <- 0
-
-  for(j in 1:nearest_neighbor_amount){
-    mindist <- .Machine$integer.max
-
-    for(k in 1:ncol(dist0)){
-      if(k!=i){
-        if(!(k %in% nnvec)==TRUE){
-
-          if(mindist > dist0[i, k]){
-            
-            mindist = dist0[i, k]
-            minid <- k
-          }
-        }
-      }
-    }
-    nnvec <- append(nnvec, minid)
-  }
-  nnvec_mat[i,] <- nnvec
-}
-nnvec_mat <- cbind(1:nrow(nnvec_mat), nnvec_mat)
-
-DI <- diag(1/(apply(df_train, 2, sd)))
-dist0 <- as.matrix(dist(as.matrix(obj_train)%*%as.matrix(DI)))
-
-nnvec_mat <- matrix(, nrow=nrow(dist0), ncol=nn_amount)
-
-for(i in 1:nrow(dist0)){
-  nnvec <- c()
-  minid <- 0
-  
-  for(j in 1:nn_amount){
-    mindist <- .Machine$integer.max
+  #extract models for jth delay map
+    model_delaymap <- model[[i]]
     
-    for(k in 1:ncol(dist0)){
-      if(k!=i){
-        if(!(k %in% nnvec)==TRUE){
-          
-          if(mindist > dist0[i, k]){
-            
-            mindist = dist0[i, k]
-            minid <- k
-          }
-        }
-      }
+    #loop through each neighborhood
+    for(j in 1:length(model_delaymap)){
+      model_nnhood <- model_delaymap[[j]]
+      
+      model_pred <- model_nnhood[[3]]   #predictions using model for specific delaymap/ neighborhood
+      model_resid <- model_nnhood[[4]]  #residuals of the specified model
+      
+      model_predresid <- model_pred + sample(model_resid, 1, replace=T)
+      density_vec <- c(density_vec,model_predresid)
+
     }
-    nnvec <- append(nnvec, minid)
-  }
-  nnvec_mat[i,] <- nnvec
 }
-nnvec_mat <- cbind(1:nrow(nnvec_mat), nnvec_mat) # <- matrix of nearest neighbors for each observation
 
-#output <- delay_map_creator(data_fake, lags=6)
-#output <- rev(output)
-#output <- na.omit(output)
-#dim.est.calc(output)
-
-#
-#obj_train <- output[[1]]
-#obj_test <- output[[2]]
-#obj_pred1 <- obj_train[,-1]
-#obj_pred2 <- obj_test[,-1]
-
-#as.matrix(obj_pred1) %*% as.matrix(DI)
-
-#DI <- diag(1/sqrt(apply(obj_pred1,2,sd)))
-#sample distance matrix
-#dist0<-as.matrix(dist(rbind(as.matrix(obj_pred2)%*%as.matrix(DI),as.matrix(obj_pred1)%*%as.matrix(DI))))
+hist(density_vec)
+  
 
 
-#testing lasso func
-#df_train_y <- obj_train[,1]
-#df_train_x <- obj_train[,-1]
-
-#df_train_x_reg <- df_train_x[, delay_maps[[1]]-1]
-
-#df_train_x_reg <- as.matrix(df_train_x_reg[nnvec_mat[1,],])
-#df_train_y_reg <- df_train_y[nnvec_mat[i,]]
-#strloc <- lars(df_train_x_reg,df_train_y_reg)
-#strloc$coeff
-
-#yp1loc<-predict(strloc,rbind(xmat.pred[i,],xmat.fit),s1loc)$fit[1]
-#yploc<-predict(strloc,df_train_x_reg,s1loc)$fit
-
-#obj <- list(strloc, strloc)
