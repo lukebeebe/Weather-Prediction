@@ -1,11 +1,8 @@
 # Weather Prediction by Luke, Kavi
-
-library(glmnet)
+library(lars)
 
 # df with 7 rows of random ints 0:5 200 times
-data_fake <- data.frame(replicate(7,sample(0:5,200,rep=TRUE)))
-
-# clean data before
+data_fake <- data.frame(replicate(7,sample(1:6,200,rep=TRUE)))
 
 # main
 weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F, split=0.7){
@@ -13,7 +10,7 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F, split=
   if(norm==T){df <- scale(df[, x])}
   df <- delay_map(df, lag)
   
-  # split data
+  # split data into past/future
   split <- floor(split*nrow(df))
   df_train <- df[1:split,]
   df_test <- df[split+1:nrow(df),]
@@ -38,13 +35,18 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F, split=
       y_test <- as.matrix(season_test[j, y])
       for(k in 1:length(sample_cols)){
         lars_x <- nn_train[, sample_cols[[k]]]
-        lars_y <- nn_train[, y]
-        print(lars_x)
-        print('hey')
-        print(lars_y)
-        print('hey')
+        lars_y <- as.vector(nn_train[, y])
+        for(l in 1:nrow(lars_x)){
+          
+          print(t(lars_x[l,]))
+          print(lars_y[l])
+          lars_output <- lars(t(lars_x[l,]),lars_y[l])
+          print(summary(lars_output))
+          # Cp values are NaN
+          
+          if(l==1){break}
+        }
       }
-      
     }
   }
   
