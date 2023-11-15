@@ -4,3 +4,4 @@ Professor LuValle worked for Bell Labs and after their fiberoptics were destroye
 - _original.R_ - Professor LuValle's original code 
 - _kc_main.R_ - Kavi's streamlined code __(work in progress)__
 - _lb_main.R_ - Luke's streamlined code __(work in progress)__
+- _Hawaii data.R_ - Data sourced from various outlets
