@@ -25,24 +25,17 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F, split=
     # seperate seasons
     season_train <- df_train[seq(i, nrow(df_train), 4), ]
     season_test <- df_test[seq(i, nrow(df_test), 4), ]
-    # rownames(season_train) <- rownames(season_test) <- NULL
     for(j in year){
       # distance matrix
       nn_rows <- nn_finder(season_train, season_test[j,], nn)
       nn_train <- season_train[nn_rows,]
       y_test <- as.matrix(season_test[j, y])
       for(k in 1:length(sample_cols)){
-        lars_x <- nn_train[, sample_cols[[k]]]
-        lars_y <- nn_train[, y]
-        for(l in 1:nrow(lars_x)){
-          print((lars_x[l,]))
-          print((lars_y[l]))
-          lars_output <- lars(t(lars_x[l,]),lars_y[l])
-          print(summary(lars_output))
-          # Cp values are NaN
-          
-          if(l==1){break}
-        }
+        X <- nn_train[, sample_cols[[k]]]
+        Y <- nn_train[, y]
+        lars_output <- lars(X, Y)
+        ypred <- predict(lars_output, nn_train[1:5,] , match(TRUE, lars_output$Cp==min(lars_output$Cp)))
+        
       }
     }
   }
@@ -81,7 +74,8 @@ delay_sample <- function(ntrial=1200, ncol, nsel){
 nn_finder <- function(x, y, nn){
   df <- rbind(y, x)
   dist_order <- order(as.matrix(dist(df))[,1])
-  nn_cols <- match(2:31, dist_order)-1
+  nn_cols <- (match(2:6, dist_order)-1)
+  nn_cols <- append(nn_cols, (match(7:31, dist_order)-1))
   return(nn_cols)
 }
 
