@@ -3,8 +3,8 @@ Professor LuValle worked for Bell Labs and after their fiberoptics were destroye
 
 - _data_
   - _HF_data.R_ - Dataframe which contains original values for Hawaii and Fresno locations
-  - _fresno_data.R_ - Dataframe which contains scaled values for Fresno locations
-  - _hawaii_data.R_ - Dataframe which contains scaled values for Hawaii locations
+  - _fresno_data.R_ - Dataframe which contains scaled values for Fresno locations (scaled per location, not season)
+  - _hawaii_data.R_ - Dataframe which contains scaled values for Hawaii locations (scaled per location, not season)
 - _original code_ - Professor LuValle's original code and pdf sent to us
 - _kc_main.R_ - Kavi's streamlined code __(work in progress)__
 - _lb_main.R_ - Luke's streamlined code __(work in progress)__
