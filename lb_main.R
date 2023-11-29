@@ -2,12 +2,13 @@
 library(lars)
 
 # NORMALIZE DATA PER SEASON
+# MAKE DELAY MAP CORRECT
 
 # main
 weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F){
   df <- data[, append(x, y)]
   rownames(df) <- seq(1, nrow(df), 1)
-  if(norm==T){df <- scale(df[, x])}
+  # if(norm==T){df <- scale(df[, x])} MOVE THIS TO RESPECTIVE SEASONS
   df <- delay_map(df, lag)
 
   # split data into past/future 9 seasons
@@ -23,8 +24,7 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F){
   # random samples to pull from columns
   sample_cols <- delay_sample(ntrial=1200, (ncol(df_train)-1), dim)
   par(mfrow=c(length(seas),length(year)))
-  info <- NULL
-  resids <- NULL
+  ypreds <- resids <- paths <- NULL
   
   for(i in seas){
     # seperate seasons
@@ -32,7 +32,8 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F){
     season_test <- df_test[seq(i, nrow(df_test), 4), ]
     for(j in year){
       # distance matrix
-      nn_rows <- nn_finder(season_train, season_test[j,], nn)
+      remove_col <- length(x) + length(y)
+      nn_rows <- nn_finder(season_train[,-(1:(remove_col*j))], season_test[j,-(1:(remove_col*j))], nn)
       nn_train <- season_train[nn_rows,]
       y_test <- as.matrix(season_test[j, y])
       for(k in 1:length(sample_cols)){
@@ -44,17 +45,22 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F){
           #TROUBLESHOOT NA VALUES
           next
         }
-        ypred <- predict(lars_output, X[1:5,])$fit[, model_col]
+        else{
+          ypred <- predict(lars_output, X[1:5,])$fit[, model_col]
+        }
+        ypreds <- append(ypreds, ypred)
         resid <- Y[1:5] - ypred
-        info <- append(info, list(ypred, resid, sample_cols[[k]]))
         resids <- append(resids, resid)
+        paths <- append(paths, sample_cols[[k]])
       }
-      #TROUBLESHOOT NA VALUES
       resids <- na.omit(resids)
-      print(paste("NA values:", (6000-length(resids))/5))
-      den <- density(resids)
-      plot(den, frame=T, col='blue',main=paste(j,i))
-      resids<-NULL
+      ypreds <- na.omit(ypreds)
+      preds <- sample(ypreds, 6000, replace=T) + sample(resids, 6000, replace=T)
+      print(paste("NA values:", (5*1200-length(resids))/5))
+      den <- density(preds)
+      plot(den, frame=T, col='blue',main=paste(j,i), xlim=c(-3,3))
+      abline(v=y_test, col='red')
+      ypreds <- resids <- paths <- NULL
     }
   }
   
@@ -66,14 +72,14 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F){
 delay_map <- function(df, lag){
   delay <- df
   names <- colnames(delay)
-  colnames(df) <- paste(as.character(0), names, sep = "")
   for(i in 1:lag){
-    colnames(delay) <- paste(as.character(i), names, sep = "")
+    colnames(delay) <- paste(names, as.character(-i), sep = " t")
     delay <- rbind(0, delay)
     delay <- delay[-nrow(delay),]
     df <- cbind(df, delay)
   }
   df <- df[lag+1:(nrow(df)-lag), ]
+  print(head(df))
   return(df)
 }
 
@@ -97,5 +103,5 @@ nn_finder <- function(x, y, nn){
   return(nn_cols)
 }
 
-weather_prediction(hawaii_data, x=2:7, y=1, seas=c(1,3), year=c(1,2), lag=6, nn=30, norm=F)
+weather_prediction(hawaii_data, x=2:7, y=1, seas=c(1,2,3,4), year=c(1,2), lag=6, nn=30, norm=F)
 
