@@ -12,7 +12,7 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F){
   df <- delay_map(df, lag)
 
   # split data into past/future 9 seasons
-  split <- nrow(df)-9
+  split <- nrow(df)-36
   df_train <- df[1:split,]
   df_test <- df[(split+1):nrow(df),]
   
@@ -30,12 +30,14 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F){
     # seperate seasons
     season_train <- df_train[seq(i, nrow(df_train), 4), ]
     season_test <- df_test[seq(i, nrow(df_test), 4), ]
+    
     for(j in year){
       # distance matrix
       remove_col <- length(x) + length(y)
       nn_rows <- nn_finder(season_train[,-(1:(remove_col*j))], season_test[j,-(1:(remove_col*j))], nn)
       nn_train <- season_train[nn_rows,]
       y_test <- as.matrix(season_test[j, y])
+      
       for(k in 1:length(sample_cols)){
         X <- nn_train[, sample_cols[[k]]]
         Y <- nn_train[, y]
@@ -53,18 +55,18 @@ weather_prediction <- function(data, x, y, seas, year, lag=6, nn, norm=F){
         resids <- append(resids, resid)
         paths <- append(paths, sample_cols[[k]])
       }
+      
       resids <- na.omit(resids)
       ypreds <- na.omit(ypreds)
       preds <- sample(ypreds, 6000, replace=T) + sample(resids, 6000, replace=T)
       print(paste("NA values:", (5*1200-length(resids))/5))
       den <- density(preds)
-      plot(den, frame=T, col='blue',main=paste(j,i), xlim=c(-3,3))
+      plot(den, frame=T, col='blue',main=paste(j-1,i), xlim=c(-3,3))
       abline(v=y_test, col='red')
       ypreds <- resids <- paths <- NULL
+      
     }
   }
-  
-  # prob distribution
 }
 
 ### Below are the functions called above ###
@@ -79,7 +81,6 @@ delay_map <- function(df, lag){
     df <- cbind(df, delay)
   }
   df <- df[lag+1:(nrow(df)-lag), ]
-  print(head(df))
   return(df)
 }
 
@@ -104,4 +105,3 @@ nn_finder <- function(x, y, nn){
 }
 
 weather_prediction(hawaii_data, x=2:7, y=1, seas=c(1,2,3,4), year=c(1,2), lag=6, nn=30, norm=F)
-
