@@ -102,12 +102,10 @@ delay_sample <- function(ntrial=1200, ncol, nsel){
   return(nums)
 }
 
-# finds euclidian distance between x rows and y row
-# IDEA - SEE DISTANCES FOR CERTAIN YEARS 
+# finds euclidian distance between x rows and y row. returns 5 closest, then 6 to 30 closest
 nn_finder <- function(x, y, nn){
-  
-  df <- rbind(y, x) # SHOULD WE SCALE VALUES BEFORE FEEDING TO dist()
-  
+  df <- rbind(y, x)
+  df <- scale(df)
   dist_order <- order(as.matrix(dist(df))[,1])
   print(head(sort(as.matrix(dist(df))[,1])))
   nn_cols <- (match(2:6, dist_order)-1)
