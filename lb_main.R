@@ -33,16 +33,20 @@ weather_prediction <- function(data, x, y, split=36, seas, year, lag=6, dim=7, n
     
     for(j in year){
       # random samples to pull from columns, set years of delay map info
-      remove_col <- (length(x)+length(y)) * j
+      remove_col <- (length(x)+length(y)) * (j-1) * 4
+      print(remove_col)
       sample_cols <- delay_sample(ntrial, ((remove_col+1):((length(x)+length(y))*lag+remove_col)), dim)
       
       # distance matrix
-      nn_rows <- nn_finder(season_train[,-(1:(remove_col*j))], season_test[j,-(1:(remove_col*j))], nn)
-      nn_train <- season_train[nn_rows,]
+      "nn_rows <- nn_finder(season_train[,-(1:(remove_col*j))], season_test[j,-(1:(remove_col*j))], nn)
+      nn_train <- season_train[nn_rows,]"
       
       y_test <- as.matrix(season_test[j, y])
       
       for(k in 1:length(sample_cols)){
+        nn_rows <- nn_finder(season_train[,sample_cols[[k]]], season_test[j,sample_cols[[k]]], nn)
+        nn_train <- season_train[nn_rows,]
+        
         X <- scale(nn_train[, sample_cols[[k]]]) ### SCALE COMPONENT
         Y <- nn_train[, y]
         lars_output <- lars(X, Y)
@@ -152,8 +156,7 @@ nn_finder <- function(x, y, nn){
 }
 
 weather_prediction(as.matrix(fresno_season), x=c(3:9), y=10,
-                   seas=c(1), year=c(1),
-                   lag=6, nn=30, dim=7, ntrial=2500,
+                   seas=c(1), year=c(1,2,3),
+                   lag=6, nn=30, dim=7, ntrial=1200,
                    sd=0.5)
 
-# get coefficients of betas from LARS output
