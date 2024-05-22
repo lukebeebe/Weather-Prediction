@@ -1,291 +1,176 @@
-#data_fake <- data.frame(replicate(7,sample(0:5,1000,rep=TRUE)))
-data_fake <- as.data.frame(F.nat0full0[,c(1,3:7)])
-source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/datamake.pck")
-source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/maketable.pck")
-source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/reproduce.pck")
-library(dplyr)
-library(lars)
-
-# main
-weather_prediction <- function(df, x, y, seas, year, lags=6, norm=F, split=0.7){
-
-  df_lag <- delay.map.creator(df, lags)
-  df_lag_omit <- na.omit(df_lag)
-  # seperate seasons
-  # turn nums into values for next step <- write into random_nums function?
-  # nearest neighbor, lars
-  # prob distribution
+  library(lars)
+  library(dplyr)
+  source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/datamake.pck")
+  source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/maketable.pck")
+  source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/reproduce.pck")
   
-  #training and test data
-  oos <- floor(nrow(df_lag_omit)-(split*nrow(df_lag_omit)))
-  df_train <- df_lag_omit[-c( (nrow(df_lag_omit)-oos):nrow(df_lag_omit)) ,]
-  df_test <- df_lag_omit
+  ################################################################################
+  # Function 1 - Creates the Delay Maps 
   
-  #calculate attractor dimension
-  dim <- dim.est.calc(rev(df_test))
-  print(dim)
-  
-  #get delay maps 
-  nsel<-ceiling(2.5*dim)
-  delay_maps<-disjoint.delaymap.make2(15,42,nsel)
-
-  #determines which season is the first obs given amount of lags
-  season <- case_when(
-    (lags - 1)/4==1 ~ '1',
-    (lags - 2)/4==1 ~ '2',
-    (lags - 3)/4==1 ~ '3',
-    TRUE ~ '4')
-  
-  season1df_test <- df_test[seq(1, nrow(df), 4), ]
-  season2df_test <- df_test[seq(2, nrow(df), 4), ]
-  season3df_test <- df_test[seq(3, nrow(df), 4), ]
-  season4df_test <- df_test[seq(4, nrow(df), 4), ]
-  
-  season1df_train <- df_train[seq(1, nrow(df), 4), ]
-  season2df_train <- df_train[seq(2, nrow(df), 4), ]
-  season3df_train <- df_train[seq(3, nrow(df), 4), ]
-  season4df_train <- df_train[seq(4, nrow(df), 4), ]
-  
-  #conduct the regression 
-  lars_pred_list <- cp.lars.reg(df_train, df_test, delay_maps, 30, 30)
-  
-  #get residuals for each neighborhood within each delay map
-  df_test_outofsample <- df_test[((nrow(df_train)+1):nrow(df_test)),]
-
-  #residlist <- resid.list(df_train, df_test_outofsample, lars_pred_list, delay_maps)
-  
-  return(list(df_train = df_train, df_test = df_test, delaymaps = delay_maps, lars_pred_list=lars_pred_list))
-}
-
-
-######################################################################################################
-#delay.map.creator
-#creates a specified amount of lags for each variable and assigns a appropriate var name
-
-delay.map.creator <- function(df, lags){
-  df_lagged <- df
-  count=ncol(df)
-  for(i in 1:lags){
-    for(j in 1:ncol(df)){
-      count = count+1
-      df_col <- df[,j]
-      df_lagcol <- lag(df_col, i)
-      print(names(df[j]))
-      name = paste(names(df[j]),i,sep='')
-      df_lagged <- cbind(df_lagged, df_lagcol)
-      names(df_lagged)[count] = as.character(name)
-    }
-  }
-  return(df_lagged)
-}
-
-
-######################################################################################################
-#disjoint.delaymap.make2
-
-#code is the same as Dr. LuValle's
-
-disjoint.delaymap.make2 <-
-  function(ntrial, ncol, nsel)
-  {
-    nmod<-ntrial*ceiling(ncol/nsel)
-    nmid<-ceiling(ncol/nsel)
-    outlist <- rep(list(), nmod)
-    k<-1
-    for(i in 1:ntrial) {
-      dum <- sample(c(2:ncol),  replace = F)
-      dum0<-dum
-      for(j in 1:nmid){
-        if(j<nmid){
-          selvec<-((j-1)*nsel)+c(1:nsel)
-          outlist[[k]] <- dum[selvec]
-          dum0<-dum0[-c(1:nsel)]
-          k<-k+1
-        }
-        else{
-          if(length(dum0)<nsel){
-            nplus<-nsel-length(dum0)
-            
-            dum0<-c(dum0,sample(c(1:ncol)[-dum0],nplus,replace=F))
-          }
-          outlist[[k]]<-dum0
-          k<-k+1
-        }
-      }
-    }
-    outlist
-  }
-
-
-######################################################################################################
-#cp.lars.reg
-
-cp.lars.reg <- function(df_train, df_test, delay_maps, nn_amount, delaymap_num){
-  
-  ### Find nearest neighbors:
-  nnvec_mat <- nn.finder(df_train, nn_amount)
-  print(nnvec_mat)
-  
-  
-  #### Find each path in the LARs Regression
-  delay_map_paths_list <- list()
-  
-  for(i in 1:delaymap_num){
-    df_train_y <- df_train[,1]
-    df_train_x <- df_train[, -1]
-    df_train_x_reg <- df_train_x[, delay_maps[[i]]-1]
+  DelayMapCreator <- function(df, lags, exclude.vars=NULL){
+    df.lag <- df
     
-    output <- lars.reg(df_train_x_reg, df_train_y, nnvec_mat)
-    delay_map_paths_list <- append(delay_map_paths_list, list(output))
+    for(i in 1:lags){
+      df.excl <- df[, !(names(df) %in% exclude.vars)]
+      df.lag.n <- df.excl %>% lag(i)
+      colnames(df.lag.n) <- paste0(colnames(df.lag.n), ".lag", i)
+      df.lag <- cbind(df.lag, df.lag.n)
+    }
+    return(df.lag)
   }
   
-  return(list(delay_map_paths_list))
-}
-
-
-######################################################################################################
-#nn.finder
-
-nn.finder <- function(df, nn_amount){
+  ################################################################################
+  # Function 2 - Main Body of the Function
   
-  #Divide x vars by sd and create distance matrix
-  DI <- diag(1/(apply(df, 2, sd)))
-  dist0 <- as.matrix(dist(as.matrix(df)%*%as.matrix(DI)))
+  # df, 6, c("season", "year"), "F_PRCP"
   
-  #create distance mat
-  nnvec_mat <- matrix(, nrow=nrow(dist0), ncol=nn_amount)
-  
-  #for each obs, find the 30 nearest neighbors (smallest dist in dist matrix)
-  for(i in 1:nrow(dist0)){
-    nnvec <- c()
-    minid <- 0
+  WeatherPredFunc <- function(df, lags, non.rep.var, pred, year.start, year.forward, nn.amnt) {
     
-    #loop for the size of the neighborhood (1:30 nearest neighbors, for example)
-    for(j in 1:nn_amount){
-      mindist <- .Machine$integer.max
+  #### Part 1 - Setting up Delay Maps
+    
+    # - create the delaymap
+    df.lag <- DelayMapCreator(df, lags, non.rep.var)
+    df.lag <- df.lag %>% na.omit 
+    
+    # - relocate the untoached variables
+    df.lag <- df.lag %>% relocate(non.rep.var, .after = last_col())
+    df.lag <- df.lag %>% relocate(pred, .after = last_col())
+    df.lag <- df.lag[,-c(1:(ncol(df)-1-length(non.rep.var)))] 
+    
+    # - split the test/train
+    df.lag.train <- df.lag %>% filter(year < year.start) %>% arrange(year)
+    df.lag.test <- df.lag %>% filter(year >= year.start) %>% arrange(year)
+    
+    # - calculate attractor dimension and create delay maps 
+    dim <- dim.est.calc(df.lag.train)
+    nsel<-ceiling(2.5*dim)
+    delay.maps <- disjoint.delaymap.make1(30,(ncol(df.lag)-length(non.rep.var)-1),nsel)
+    
+  
+  #### Part 2 - Looping to calculate the variables 
+    
+    dmp.year.list <- list()
+    
+    for(i in 1:year.forward){
       
-      #find obs with lowest distance, if not already in the vector of nearest neighbors (nnvec)
-      for(k in 1:ncol(dist0)){
-        if(k!=i){
-          if(!(k %in% nnvec)==TRUE){
-            
-            if(mindist > dist0[i, k]){
-              
-              mindist = dist0[i, k]
-              minid <- k
-            }
-          }
+      dmp.season.list <- list()
+
+      for(j in c(4,1,2,3)){
+        
+        delay.map.pred.list <- list()
+        
+        for(k in 1:length(delay.maps)){
+          
+          df.lt.delay.train <- cbind(
+            df.lag.train[, delay.maps[[k]]],
+            df.lag.train[, (ncol(df.lag.train)-length(non.rep.var)):ncol(df.lag.train)]
+          )
+          
+          df.lt.delay.test <- cbind(
+            df.lag.test[, delay.maps[[k]]],
+            df.lag.test[, (ncol(df.lag.test)-length(non.rep.var)):ncol(df.lag.test)]
+          )
+          
+          pred <- WeatherPredLars(df.lt.delay.train, df.lt.delay.test, i, j, year.start, nn.amnt, non.rep.var)
+          delay.map.pred.list <- append(delay.map.pred.list, pred)
         }
+        
+        #dmp.season.list <- append(dmp.season.list, as.list(delay.map.pred.list))
+        dmp.season.list[[j]] <- delay.map.pred.list
+        
       }
-      nnvec <- append(nnvec, minid)
+      
+      dmp.year.list[[i]] <- dmp.season.list
+      
     }
-    nnvec_mat[i,] <- nnvec
-  }
-  nnvec_mat <- cbind(1:nrow(nnvec_mat), nnvec_mat)
-  
-  return(nnvec_mat)
-}
-
-
-######################################################################################################
-#lars.reg
-
-lars.reg <- function(df_train_x, df_train_y, nnvec_mat){
-  #using df_train with only variables of a certain delay map selected
-  #for each set of nearest neighbors, create a model
-  
-  lars_model_list <- list()
-  
-  for(i in 1:nrow(df_train_x)){
-    #take only nearest neighbor rows in training data
-    df_train_x_reg <- as.matrix(df_train_x[nnvec_mat[i,],])
-    df_train_y_reg <- as.matrix(df_train_y[nnvec_mat[i,]])
     
-    #lars regression
-    strloc <- lars(df_train_x_reg, df_train_y_reg)
+    resid.list.year <- list()
+    
+    for(i in 1:length(dmp.year.list)){
+      
+      resid.list.seas <- list()
+
+      year.preds <- dmp.year.list[[i]] 
+      
+      for(j in c(4,1,2,3)){
+        
+        actual.val <- fresno_season %>% filter(year==(year.start+i-1), season==j) %>% select(F_PRCP)
+        season.preds <- dmp.season.list[[j]]
+        seasons.preds <- as.vector(unlist(season.preds, use.names=FALSE))
+        seas.pred <- mean(na.omit(seasons.preds))
+
+        resid <- actual.val - seas.pred
+        resid.vec <- list(as.numeric(actual.val), as.numeric(seas.pred), as.numeric(resid), as.vector(seasons.preds))
+        resid.list.seas[[j]] <- resid.vec
+
+      }
+      
+      resid.list.year[[i]] <- resid.list.seas
+      
+    }
+    
+    return(resid.list.year)
+    
+  }
+  
+  ################################################################################
+  # Function 3 - does the actual weather prediction
+  
+  WeatherPredLars <- function(df.lag.train, df.lag.test, year.loop, month.loop, year.start, nn.amnt, non.rep.var){
+    
+    #current date that is being predicted 
+    df.pred <- df.lag.test %>% filter(year == year.start + year.loop - 1, season == month.loop)
+    df.full <- rbind(df.lag.train, df.pred)
+    
+    df.full <- df.full[-c((ncol(df.lag.train)-length(non.rep.var)):(ncol(df.lag.train)-1))]
+    
+    #distance matrix
+    DI <- diag(1/(apply(df.full[,-nrow(df.full)], 2, sd)))
+    dist0 <- as.matrix(dist(as.matrix(df.full[,-nrow(df.full)])%*%as.matrix(DI)))
+    dist0 <- (as.data.frame(dist0))[nrow(dist0), ]
+    dist0.rank <- as.numeric(dist0)
+    dist0.rank <- rank(dist0)
+    
+    #find obs with nearest neighbors
+    dist0.rank.bind <- rbind(dist0, dist0.rank, c(1:ncol(dist0)))
+    dist0.rank.bind <- dist0.rank.bind[,-ncol(dist0.rank.bind)]
+    dist0.rank.bind <- dist0.rank.bind[3, dist0.rank.bind[2,] %in% c(1:(nn.amnt+1))]
+    dist0.rank.bind <- as.numeric(as.data.frame(dist0.rank.bind))
+    
+    df.nn <- df.full[dist0.rank.bind, ]
+    
+    #make estimation
+    x.mat.resid <- df.full[-nrow(df.full), -ncol(df.full)]
+    y.mat.resid <- df.full[-nrow(df.full), ncol(df.full)]
+
+    strloc <- lars(as.matrix(x.mat.resid), as.matrix(y.mat.resid))
     Iloc<-(strloc$Cp==min(strloc$Cp))
     s1loc<-(c(1:length(Iloc))[Iloc])[1]
     
-    #predictions w/ training data using the model on the nearest neighborhood 
-    df_train_x_reg_resid <- as.matrix(df_train_x[nnvec_mat[i,],])
-    ypredfull <- predict(strloc,df_train_x_reg_resid,s1loc)$fit
-    
-    #residuals for top n nearest neighbors in neighhborhood
-    df_train_x_reg_resid <- as.matrix(df_train_x[nnvec_mat[i,1:5],])
-    ypred <- predict(strloc,df_train_x_reg_resid,s1loc)$fit
-    resid <- df_train_y[nnvec_mat[i,1:5]] - ypred
-
-    #return list of model outputs
-    lars_mod <- list(strloc, s1loc, ypredfull, resid)
-    lars_model_list <- append(lars_model_list, list(lars_mod))
-    
-  }
-  return(lars_model_list)
-}
-
-######################################################################################################
-#resid.list
-#this function is not utilized as of right now, all residual calculations are in the previous function
-
-resid.list <- function(df_train, df_test, chaos_model_list, delay_maps){
-  
-  resid_list <- list()
-  
-  for(i in 1:length(chaos_model_list[[1]])){
-    xmat_fit <- df_test[, delay_maps[[i]]]
-    delaymap_models <- chaos_model_list[[1]][[i]]
-
-    delaymap_residlist <- list()
-    
-    for(j in 1:length(delaymap_models)){
-       model_list <- delaymap_models[[j]]
-       model <- model_list[[1]]
-       bestmodel <- model_list[[2]]
-
-       ypred <- predict(model,xmat_fit,bestmodel)$fit
-       resid <- df_test[1] - ypred
-    
-       delaymap_residlist <- append(delaymap_residlist, list(resid))
-    }
-    resid_list <- append(resid_list, list(delaymap_residlist))
-  }
-  
-  return(resid_list)
-}
-
-######################################################################################################
-
-
-
-################################################################################
-# run code below 
-################################################################################
-output <- weather_prediction(data_fake, x=2:7, y=1, seas=1, year=1, lag=6, norm=F, split=0.7)
-
-#WIP - Histogram of nonparametric Density Function  
-model <- output[[4]][[1]] 
-density_vec <- c()
-
-for(i in 1:length(model)){
-  print(i)
-  
-  #extract models for jth delay map
-    model_delaymap <- model[[i]]
-    
-    #loop through each neighborhood
-    for(j in 1:length(model_delaymap)){
-      model_nnhood <- model_delaymap[[j]]
+    if(is.na(s1loc)){
+      test.pred <- NA
       
-      model_pred <- model_nnhood[[3]]   #predictions using model for specific delaymap/ neighborhood
-      model_resid <- model_nnhood[[4]]  #residuals of the specified model
+    } else {
       
-      model_predresid <- model_pred + sample(model_resid, 1, replace=T)
-      density_vec <- c(density_vec,model_predresid)
+      #residuals on training data
+      pred.mat.resid <- predict(strloc,x.mat.resid,s1loc)$fit
+      resid.mat <- rbind(y.mat.resid, pred.mat.resid)
+      resid.train <- sample(resid.mat[1,] - resid.mat[2,], 5)
+      
+      #test predictions
+      x.mat <- df.pred[, 1:(ncol(df.pred)-1-length(non.rep.var))]
+      test.pred <- predict(strloc, as.matrix(x.mat), s1loc)$fit
+      test.pred <- test.pred + sample(resid.train, 5, replace=T)
 
     }
-}
-
-hist(density_vec)
+    
+    return(test.pred)
+  }
   
-
-
+  ################################################################################
+  # Non-function part of the code, where users can alter it
+  
+  weather.preds.result <- WeatherPredFunc(fresno_season, 6, c("season", "year"), "F_PRCP", 1990, 6, 30)
+  # actual value, pred value, residual, all preds 
+  
+  
