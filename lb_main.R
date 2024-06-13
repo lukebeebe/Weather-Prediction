@@ -33,10 +33,9 @@ weather_prediction <- function(data, x, y, split=36, seas, year, lag=6, dim=7, n
     
     for(j in year){
       # random samples to pull from columns, set years of delay map info
-      remove_col <- (length(x)+length(y)) * (j-1) * 4
+      remove_col <- (length(x)+length(y)) * (j-1) * 4 # four seasons removed for each year
       print(remove_col)
       sample_cols <- delay_sample(ntrial, ((remove_col+1):((length(x)+length(y))*lag+remove_col)), dim)
-      
       # distance matrix
       "nn_rows <- nn_finder(season_train[,-(1:(remove_col*j))], season_test[j,-(1:(remove_col*j))], nn)
       nn_train <- season_train[nn_rows,]"
@@ -47,7 +46,7 @@ weather_prediction <- function(data, x, y, split=36, seas, year, lag=6, dim=7, n
         nn_rows <- nn_finder(season_train[,sample_cols[[k]]], season_test[j,sample_cols[[k]]], nn)
         nn_train <- season_train[nn_rows,]
         
-        X <- scale(nn_train[, sample_cols[[k]]]) ### SCALE COMPONENT
+        X <- scale(nn_train)[, sample_cols[[k]]] ### SCALE COMPONENT
         Y <- nn_train[, y]
         lars_output <- lars(X, Y)
         model_col <- match(TRUE, lars_output$Cp==min(lars_output$Cp))
@@ -89,8 +88,9 @@ weather_prediction <- function(data, x, y, split=36, seas, year, lag=6, dim=7, n
       
       path_beta_df <- path_beta_df[order(path_beta_df$beta_sum, decreasing=T),]
       
-      prob <- sum(rp_indexes==T)/length(rp_indexes)
-      print(paste("Probability:", prob))
+      # Probabilities are coming out wrong
+      # prob <- sum(rp_indexes==T)/length(rp_indexes)
+      # print(paste("Probability:", prob))
       
       sig_mean <- mean(path_beta_df$beta_sum)
       
@@ -115,7 +115,6 @@ weather_prediction <- function(data, x, y, split=36, seas, year, lag=6, dim=7, n
       abline(v=y_test-sd_adj, col='grey', lty='dashed')
       
       ypreds <- resids <- paths <- betas <- rp_indexes <- NULL
-
     }
   }
 }
@@ -155,8 +154,7 @@ nn_finder <- function(x, y, nn){
   return(nn_cols)
 }
 
-weather_prediction(as.matrix(fresno_season), x=c(3:9), y=10,
-                   seas=c(1), year=c(1,2,3),
+weather_prediction(as.matrix(fresno_season), x=c(3:8,10), y=9,
+                   seas=c(1), year=c(0,1),
                    lag=6, nn=30, dim=7, ntrial=1200,
                    sd=0.5)
-
