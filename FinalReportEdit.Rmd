@@ -1,0 +1,913 @@
+---
+title: "Delay-Mapping for Future Predictions and Comparison to Time Series Methods"
+author: "Kavi Chikkappa"
+date: "2024-05-25"
+output: html_document
+---
+
+<style type="text/css">
+  body{
+  font-size: 14pt;
+}
+</style>
+
+```{r setup, include=FALSE}
+## SETUP Code Chunk
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(lars)
+  source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/datamake.pck")
+  source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/maketable.pck")
+  source("C:/Users/user00/Desktop/LuValle/SOI Rainfall and the solar cycle/reproduce.pck")
+```
+
+```{r, include = FALSE}
+## Code Chunk that generates the Fresno Data
+  weather_data <- read.csv("C:/Users/user00/Desktop/LuValle/Spring2024/HF_data.csv")
+fresno <- weather_data[,-c(1,4,5,12,15)] # remove unnecessary columns
+head(fresno)
+
+season <- c(4,4,1,1,1,2,2,2,3,3,3,4)
+fresno <- cbind(season, fresno)
+fresno_season <- (fresno[1,]+fresno[2,])/2 # first winter
+fresno <- fresno[-c(1,2),]
+for(m in 1:floor(length(fresno$year)/3)){
+  season <- (fresno[1,]+fresno[2,]+fresno[3,])/3
+  fresno_season <- rbind(fresno_season, season)
+  fresno <- fresno[-c(1,2,3),]
+}
+fresno_season$year <- as.integer(ceiling(fresno_season$year))
+fresno_season <- fresno_season[,-c(3)]
+fresno_season <- fresno_season[-c(1, nrow(fresno_season)),] # remove first winter and last winter (incomplete data)
+```
+
+## Introduction
+This report concerns the usage of Delay Mapping and Multiview Embedding for future prediction of time-series data, in this instance being future precipitation levels in Fresno, California. This method of prediction originates from concepts in the study of physical systems exhibiting 'chaotic' behavior, and utilizes relationships between multiple variables in a physical system to determine future behavior. This method of prediction will be compared to other methods of future prediction stemming from time series analysis, including ARIMA, Vector Auto-Regressions, and Vector Auto-Regressions on Principal Components. 
+
+$$\\[0.05in]$$
+
+## Delay-Mapping and Future Prediction
+The method of prediction explored in this paper involves the usage of Delay-Mapping and Multiview Embedding. This approach stems from research conducted on the behavior of 'chaotic' physical systems. Researchers studying chaotic dynamical systems discovered that hyperdimensional attractor of such a system - a geometric representation of its long term behavior - can be effectively reconstructed using lags of the variables present in the system. This technique is known as delay mapping. Another technique for the prediction of chaotic and noisy dynamic systems is Multiview Embedding, which involves subsetting the independent variables of a system into a different 'groups,' then aggregating predictive models of these individual groups on a dependent variable. 
+
+The data utilized in report includes atmospheric indicators, temperatures, sunspot cycle metrics, and precipitation levels in Fresno, California from 1963-2012. A table of some data entries is shown below. The seasons indicate the 4 seasons of the year, with Season 4 being Winter (and the first season chronologically in a given year), Season 1 being Spring, Season 2 being Summer, and Season 3 being Fall. 
+
+$$\\[0.05in]$$
+
+#### Fresno Climate Dataset
+```{r, echo=FALSE}
+head(fresno_season)
+```
+
+$$\\[0.05in]$$
+
+The Delay-Mapping approach will be utilized to predict future precipitation levels in Fresno. To evaluate the results and effectiveness of this approach, data before 1990 will be used to create the model (training data) which will be used to predict rainfall levels for the next 6 years after 1990. These predictions will then be compared to the actual levels of rainfall in this time period. The approach of this model is as follows:
+
+ * Step 1: Take the precipitation level and independent variables and generate lags of the respective variables from 1 to 6 seasons in the past. 
+ * Step 2: Create the 'delay maps' by creating random subsets of all n\*L variables (with n representing the amount of variables and L representing the lags of each variable = 6). The amount of variables per subset is determined using an estimate of the dimension of the 'attractor' of the training data.
+ * Step 3: For every delay map, create a model using the training data that regresses each season's climate/weather conditions on next 1st, 2nd, 3rd,...nth season ahead's rainfall levels. This is done by finding the 30 'nearest neighbors' of the most current season for a given delay map and an nth prediction ahead, and using a lasso regression model to fit a relationship between the variables in the delay map and the nth season ahead's rainfall level. 
+ * Step 4: Fit each delay map's model for an nth season ahead on the most current seasonal data to find predictions for the next season, 2nd season,...nth season in the future. Use these predictions to form a predictive density and create an aggregate prediction using the central tendency of this density.
+ 
+Using data before 1990 as training data, predicted precipitation levels per season for the 6 years (1990-1996) are found and composed into predictive densities, with the actual level of precipitation represented as a blue line:
+
+
+```{r, include = FALSE}
+#Code for the Delay-Mapping Approach
+
+  # Function 1 - Creates the Delay Maps 
+  
+  DelayMapCreator <- function(df, lags, exclude.vars=NULL){
+    df.lag <- df
+    
+    for(i in 1:lags){
+      df.excl <- df[, !(names(df) %in% exclude.vars)]
+      df.lag.n <- df.excl %>% lag(i)
+      colnames(df.lag.n) <- paste0(colnames(df.lag.n), ".lag", i)
+      df.lag <- cbind(df.lag, df.lag.n)
+    }
+    return(df.lag)
+  }
+
+################################################################################
+
+  WeatherPredFunc <- function(df, lags, non.rep.var, pred, year.start, year.forward, nn.amnt) {
+    
+    ############################################################################      
+    #### Part 1 - Setting up Delay Maps
+    ############################################################################    
+    
+    # - create the delaymap
+    df.lag <- DelayMapCreator(df, lags, non.rep.var)
+    df.lag <- df.lag %>% na.omit 
+    
+    # - relocate the untoached variables
+    df.lag <- df.lag %>% relocate(non.rep.var, .after = last_col())
+    df.lag <- df.lag %>% relocate(pred, .after = last_col())
+    
+    # - split the test/train
+    df.train <- df.lag %>% filter(year < year.start) %>% arrange(year)
+    df.future <- df.lag %>% filter(year >= year.start) %>% arrange(year)
+    
+    # - calculate attractor dimension and create delay maps 
+    dim <- dim.est.calc(df.train)
+    nsel<-ceiling(2.5*dim)
+    delay.maps <- disjoint.delaymap.make1(30,(ncol(df.lag)-length(non.rep.var)-1),nsel)
+
+    ############################################################################
+    ### Part 2 - Doing the Predictions
+    ############################################################################
+    
+    preds.delay.maps <- list()
+    
+    for (i in 1:length(delay.maps)){
+      
+      #list to save the predictions to per delay map
+      preds.years <- list()
+      
+      # - filter out the variables based on the delay map
+      df.lt.dm <- cbind(
+        df.train[, delay.maps[[i]]],
+        df.train[, (ncol(df.lag)-length(non.rep.var)):ncol(df.lag)]
+      )
+      
+      #extract the most recent obs
+      current.dat <- df.lt.dm[nrow(df.lt.dm), ] 
+      current.dat <- current.dat %>% dplyr::select(-all_of(non.rep.var))
+      
+      
+      #loop through for the next seasons and create models that predict
+      ############################################################################
+
+      for(j in 1:(year.forward*4)){
+        
+        #create the y variable representing the future season being predicted 
+        df.lt.dm.leap <- df.lt.dm %>% 
+          mutate(y = lead(df.lt.dm[, ncol(df.lt.dm)], j)) %>% 
+          na.omit() %>% 
+          dplyr::select(-all_of(non.rep.var))
+        
+        #find nearest neighbors using obs most alike to the current data
+        df.nn <- df.lt.dm.leap %>% 
+          dplyr::select(-y) %>%
+          add_row(current.dat)
+        
+        #find the nearest neighbors using euclidean distance matrix
+        DI <- diag(1/(apply(df.nn, 2, sd)))
+        dist0 <- as.matrix(dist(as.matrix(df.nn)%*%as.matrix(DI)))
+        dist0 <- (as.data.frame(dist0))[nrow(dist0), ]
+        dist0.rank <- as.numeric(dist0)
+        dist0.rank <- rank(dist0)
+        
+        dist0.rank.bind <- rbind(dist0, dist0.rank, c(1:ncol(dist0)))
+        dist0.rank.bind <- dist0.rank.bind[,-ncol(dist0.rank.bind)]
+        dist0.rank.bind <- dist0.rank.bind[3, dist0.rank.bind[2,] %in% c(1:(nn.amnt+1))]
+        dist0.rank.bind <- as.numeric(as.data.frame(dist0.rank.bind))
+        
+        #the delay map filtered to include nearest neighbors
+        df.nn.filter <- df.lt.dm.leap[dist0.rank.bind, ]
+        
+        #create a direct map
+        ########################################################################
+        x.mat.resid <- df.nn.filter[, -ncol(df.nn.filter)]
+        y.mat.resid <- df.nn.filter$y
+
+        #get predictions
+        strloc <- lars(as.matrix(x.mat.resid), as.matrix(y.mat.resid))
+        Iloc<-(strloc$Cp==min(strloc$Cp))
+        s1loc<-(c(1:length(Iloc))[Iloc])[1]
+        
+        if(is.na(s1loc)){
+          
+            test.pred <- c(NA)
+
+        } else {
+          
+            #fit the model found on the training data to generate residuals
+            pred.mat.resid <- predict(strloc,x.mat.resid,s1loc)$fit
+            resid.mat <- rbind(y.mat.resid, pred.mat.resid)
+            resid.train <- sample(resid.mat[1,] - resid.mat[2,], 5)
+    
+            #fit the model on the current data
+            x.mat <- current.dat
+            test.pred <- predict(strloc, as.matrix(x.mat), s1loc)$fit
+            test.pred <- test.pred + sample(resid.train, 5, replace=T)
+
+        }
+        
+        preds.years[[j]] <- test.pred
+
+      }
+      
+      preds.delay.maps[[i]] <- preds.years
+
+    }
+    
+    #get the actual values from the dataset
+    actual.vals <- df.future[1:(year.forward*4),ncol(df.future)]
+
+    return(list(preds.delay.maps, actual.vals))
+  }
+
+preds.out <- WeatherPredFunc(fresno_season, 6, c("season", "year"), "F_PRCP", 1990, 6, 30) 
+
+```
+
+```{r, include = FALSE}
+
+#Code that combines all the predictions across delay maps into a list of predictions per season
+preds.per.season <- list()
+
+for (i in 1:(6*4)){
+  
+  preds.indiv <- vector()
+  
+  for(j in 1:length(preds.out[[1]])) {
+    
+    preds.indiv <- append(preds.indiv, preds.out[[1]][[j]][[i]])
+    
+  }
+  
+  preds.per.season[[i]] <- preds.indiv
+  
+}
+```
+
+$$\\[0.05in]$$
+
+#### Predictive Densities for Each Year and Season into the Future: Winter 1990 - Fall 1996
+
+```{r, echo=FALSE, fig.align='center'}
+#plots the densities
+kpar.default <- c(5.1, 4.1, 4.1, 2.1)
+par(mfrow=c(2,2))
+
+
+plot(density(preds.per.season[[1]]),
+     main = "Year 1 Season 4")
+abline(v=preds.out[[2]][[1]], col="blue")
+
+plot(density(preds.per.season[[2]]),
+     main = "Year 1 Season 1")
+abline(v=preds.out[[2]][[2]], col="blue")
+
+plot(density(preds.per.season[[3]]),
+     main = "Year 1 Season 2")
+abline(v=preds.out[[2]][[3]], col="blue")
+
+plot(density(preds.per.season[[4]]),
+     main = "Year 1 Season 3")
+abline(v=preds.out[[2]][[4]], col="blue")
+
+plot(density(preds.per.season[[5]]),
+     main = "Year 2 Season 4")
+abline(v=preds.out[[2]][[5]], col="blue")
+
+plot(density(preds.per.season[[6]]),
+     main = "Year 2 Season 1")
+abline(v=preds.out[[2]][[6]], col="blue")
+
+plot(density(preds.per.season[[7]]),
+     main = "Year 2 Season 2")
+abline(v=preds.out[[2]][[7]], col="blue")
+
+plot(density(preds.per.season[[8]]),
+     main = "Year 2 Season 3")
+abline(v=preds.out[[2]][[8]], col="blue")
+
+plot(density(preds.per.season[[9]]),
+     main = "Year 3 Season 4")
+abline(v=preds.out[[2]][[9]], col="blue")
+
+plot(density(preds.per.season[[10]]),
+     main = "Year 3 Season 1")
+abline(v=preds.out[[2]][[10]], col="blue")
+
+plot(density(preds.per.season[[11]]),
+     main = "Year 3 Season 2")
+abline(v=preds.out[[2]][[11]], col="blue")
+
+plot(density(preds.per.season[[12]]),
+     main = "Year 3 Season 3")
+abline(v=preds.out[[2]][[12]], col="blue")
+
+plot(density(preds.per.season[[13]]),
+     main = "Year 4 Season 4")
+abline(v=preds.out[[2]][[13]], col="blue")
+
+plot(density(preds.per.season[[14]]),
+     main = "Year 4 Season 1")
+abline(v=preds.out[[2]][[14]], col="blue")
+
+plot(density(preds.per.season[[15]]),
+     main = "Year 4 Season 2")
+abline(v=preds.out[[2]][[15]], col="blue")
+
+plot(density(preds.per.season[[16]]),
+     main = "Year 4 Season 3")
+abline(v=preds.out[[2]][[16]], col="blue")
+
+plot(density(preds.per.season[[17]]),
+     main = "Year 5 Season 4")
+abline(v=preds.out[[2]][[17]], col="blue")
+
+plot(density(preds.per.season[[18]]),
+     main = "Year 5 Season 1")
+abline(v=preds.out[[2]][[18]], col="blue")
+
+plot(density(preds.per.season[[19]]),
+     main = "Year 5 Season 2")
+abline(v=preds.out[[2]][[19]], col="blue")
+
+plot(density(preds.per.season[[20]]),
+     main = "Year 5 Season 3")
+abline(v=preds.out[[2]][[20]], col="blue")
+
+plot(density(preds.per.season[[21]]),
+     main = "Year 6 Season 4")
+abline(v=preds.out[[2]][[21]], col="blue")
+
+plot(density(preds.per.season[[22]]),
+     main = "Year 6 Season 1")
+abline(v=preds.out[[2]][[22]], col="blue")
+
+plot(density(preds.per.season[[23]]),
+     main = "Year 6 Season 2")
+abline(v=preds.out[[2]][[23]], col="blue")
+
+plot(density(preds.per.season[[24]]),
+     main = "Year 6 Season 3")
+abline(v=preds.out[[2]][[24]], col="blue")
+
+
+
+```
+
+$$\\[0.05in]$$
+
+The predictive densities for each future season form non-normal distributions. Many densities exhibit skewdness and some exhibit bimodality. Some of the predictive distributions center around the actual value with high accuracy, while others exhibit centers that are considerably off from the actual value. 
+
+The means of each predictive distribution are taken to represent an 'aggregate' prediction, and plotted against the actual values from 1990-1996:
+
+$$\\[0.05in]$$
+
+```{r, echo=FALSE, warning=FALSE, fig.align='center'}
+#plot the predictions vs actual values
+
+library(ggplot2)
+year.vals <- c("1990-4", "1990-1", "1990-2", "1990-3",
+               "1991-4", "1991-1", "1991-2", "1991-3",
+               "1992-4", "1992-1", "1992-2", "1992-3",
+               "1993-4", "1993-1", "1993-2", "1993-3",
+               "1994-4", "1994-1", "1994-2", "1994-3",
+               "1995-4", "1995-1", "1995-2", "1995-3")
+plot.df <- as.data.frame(cbind(as.factor(year.vals), as.numeric(lapply(preds.per.season, mean)), V3=1:24, V4=preds.out[[2]])) 
+plot.df2 <- plot.df %>% dplyr::select(-V2) %>% rename(V2 = V4) %>% mutate(Type="Actual")
+plot.df3 <- plot.df %>% dplyr::select(-V4) %>% mutate(Type = "Predicted")
+plot.df <- rbind(plot.df3, plot.df2) %>% mutate(Type = as.factor(Type))
+ 
+ggplot(plot.df, aes(x=V3, y=V2, color=Type)) + geom_line() + geom_point() +
+  xlab("Seasons into the Future") + ylab("Precipitation Level") +
+  ggtitle("Predicted and Actual Precipitation Levels using Delay-Map Method",
+          subtitle = "Winter 1990 - Fall 1996") + scale_color_manual(values=c("red", "blue"))
+  
+```
+From these predictions, it seems that the Delay-Map method is able to approximate the times when rainfall levels will rise and fall, however struggles to capture the magnitude of upward rainfall spikes.
+
+$$\\[0.05in]$$
+
+## ARIMA Modeling
+
+Future rainfall levels in Fresno, California will also be predicted using common time series analysis methods. The first method will be a univariate ARIMA model, which predicts future levels of rainfall by examining solely previous levels of rainfall.
+
+The training data is used to fit a model of a next observation's rainfall level based on previous rainfall levels. The parameters of the ARIMA model include auto-regressive, moving average, differencing, and seasonal components, determined using the auto.arima function. The predictions for the 2nd season into the future are found by inserting the 1st season's prediction into the training data, and recalculating the model (recursive prediction). The resulting predictions, along with their 95% confidence bounds, are returned below for Winter 1990 - Fall 1996:
+
+$$\\[0.05in]$$
+
+```{r, include=FALSE,  fig.align='center'}
+library(forecast)
+
+WeatherTimeSeries <- function(df, ref.vars, pred, year.start, year.forward){
+  
+  df.train <- df %>% filter(year < year.start)
+  df.test <- df %>% filter(year >= year.start)
+  
+  #pick the best combination of lags
+  autoarima.obj <- auto.arima(df.train %>% select(pred))[[7]]
+  
+  #
+  y <- df.train %>% select(pred)
+  modA <- arima(y, order=c(autoarima.obj[[1]],
+                               autoarima.obj[[6]],
+                               autoarima.obj[[2]]),
+                       seasonal=c(autoarima.obj[[3]],
+                                autoarima.obj[[7]],
+                                autoarima.obj[[4]]))
+  
+  #get the future values
+  yhat <- forecast(modA, h=(year.forward*4))
+  
+  return(yhat)
+
+}
+
+ar.preds.out <- WeatherTimeSeries(fresno_season, c("season", "year"), "F_PRCP", 1990, 6)
+  
+```
+
+```{r, echo=FALSE, fig.align='center'}
+
+plot.df2 <- as.data.frame(cbind(V1=ar.preds.out$mean, V2=1:24)) %>% mutate(Type="Predicted")
+plot.df3 <- as.data.frame(cbind(V1=ar.preds.out$lower, V2=1:24)) %>% mutate(Type="95% Lower Confidence Bound")
+plot.df4 <- as.data.frame(cbind(V1=ar.preds.out$upper, V2=1:24)) %>% mutate(Type="95% Upper Confidence Bound")
+plot.df5 <- as.data.frame(cbind(V1=preds.out[[2]], V2=1:24)) %>% mutate(Type="Actual")
+plot.df <- rbind(plot.df2,plot.df5) 
+
+plot.df3 <- rbind(plot.df3, plot.df3)[,-1]
+plot.df4 <- rbind(plot.df4, plot.df4)[,-1]
+
+ggplot(plot.df, aes(x=V2, y=V1, color=Type)) + geom_line() + geom_point()  +
+  xlab("Seasons into the Future") + ylab("Precipitation Level")+ scale_color_manual(values=c("red", "blue")) +
+  geom_line(aes(y=plot.df3$V1), linetype = "dashed") + 
+  geom_line(aes(y=plot.df4$V1), linetype = "dashed") +
+    ggtitle("Predicted and Actual Precipitation Levels using ARIMA",
+          subtitle = "Winter 1990 - Fall 1996")  
+
+```
+
+$$\\[0.05in]$$
+
+The univariate ARIMA model struggles to predict future rainfall levels after 1 or 2 seasons into the future, and converges to forecasting a single value. It is not an effective method of predicting future rainfall levels. 
+
+$$\\[0.05in]$$
+
+## Vector Auto-Regressive Modeling
+
+A Vector Auto-Regression (VAR) is similar to an ARIMA model, however generates future predictions for a system of dynamic variables. For each variable in a system, a VAR generates a model of future behavior given the lags of each other variable and itself. In this case, the VAR will generate models for predicting all the independent climate variables, as well as rainfall levels.
+
+The results from conducting a VAR on the training data generates the following predicted future rainfall values, along with 95% confidence bounds for each prediction:
+
+```{r, include=FALSE}
+library(vars)
+
+WeatherTimeSeriesVAR <- function(df, ref.vars, pred, year.start, year.forward){
+  
+  df.train <- df %>% filter(year < year.start)
+  df.test <- df %>% filter(year >= year.start)
+  
+  df.train <- df.train %>% dplyr::select(-all_of(ref.vars))
+  df.test <- df.test %>% dplyr::select(-all_of(ref.vars))
+
+  #train the VAR model:
+  y.aic <- VAR(df.train, type = "const", lag.max = 6, ic = "AIC")
+  
+  #results
+  yhat <- predict(y.aic, n.ahead = 24)
+  
+  return(yhat)
+
+}
+
+var.preds.out <- WeatherTimeSeriesVAR(fresno_season, c("season", "year"), "F_PRCP", 1990, 6)
+
+```
+
+$$\\[0.05in]$$
+
+```{r, echo=FALSE, fig.align='center'}
+preds.var <- var.preds.out$fcst[[7]]
+plot.df2 <- as.data.frame(cbind(V1=preds.var[,1], V2=1:24)) %>% mutate(Type="Predicted")
+plot.df3 <- as.data.frame(cbind(V1=preds.var[,2], V2=1:24)) %>% mutate(Type="95% Lower Confidence Bound")
+plot.df4 <- as.data.frame(cbind(V1=preds.var[,3], V2=1:24)) %>% mutate(Type="95% Upper Confidence Bound")
+plot.df5 <- as.data.frame(cbind(V1=preds.out[[2]], V2=1:24)) %>% mutate(Type="Actual")
+plot.df <- rbind(plot.df2,plot.df5)
+
+plot.df3 <- rbind(plot.df3, plot.df3)
+plot.df4 <- rbind(plot.df4, plot.df4)
+
+ggplot(plot.df, aes(x=V2, y=V1, colour=Type)) + geom_line() + geom_point() +
+  xlab("Seasons into the Future") + ylab("Precipitation Level")+ scale_color_manual(values=c("red", "blue")) +
+  geom_line(aes(y=plot.df3$V1), linetype = "dashed") + 
+  geom_line(aes(y=plot.df4$V1), linetype = "dashed") +
+    ggtitle("Predicted and Actual Precipitation Levels using Vector Auto-Regression",
+          subtitle = "Winter 1990 - Fall 1996") 
+
+
+
+```
+$$\\[0.05in]$$
+
+The predictive distributions returned by the results of the VAR follow normal distributions, with the parameters of each normal distribution reflected in the 95% confidence bounds. This is in stark contrast to the non-normal predictive distributions returned using the Delay-Mapping Method, as compared below:
+
+$$\\[0.05in]$$
+
+#### Comparison of Delay-Map Predictive Distributions and VAR Predictive Distributions
+```{r, echo=FALSE, warning=FALSE, fig.align='center'}
+library(bayestestR)
+library(magrittr)
+library(multipanelfigure)
+
+dens.1 <- preds.var[1,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[1]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p1 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue") + ggtitle("Year 1 Season 4") +
+  xlab("Predicted Percipitation")
+
+dens.1 <- preds.var[2,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[2]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p2 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 1 Season 1") +
+  xlab("Predicted Percipitation")
+
+
+dens.1 <- preds.var[3,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[3]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p3 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 1 Season 2") +
+  xlab("Predicted Percipitation")
+
+
+dens.1 <- preds.var[4,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[4]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p4 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 1 Season 3") +
+  xlab("Predicted Percipitation")
+
+
+figure1 <- multi_panel_figure(columns = 2, rows = 2, panel_label_type = "none")
+figure1 %<>%
+  fill_panel(p1, column = 1, row = 1) %<>%
+  fill_panel(p2, column = 2, row = 1) %<>%
+  fill_panel(p3, column = 1, row = 2) %<>%
+  fill_panel(p4, column = 2, row = 2)
+figure1
+```
+
+```{r, echo=FALSE, warning=FALSE, fig.align='center'}
+
+library(magrittr)
+library(multipanelfigure)
+
+dens.1 <- preds.var[14,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[14]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p1 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue") + ggtitle("Year 4 Season 4") +
+  xlab("Predicted Percipitation")
+
+dens.1 <- preds.var[15,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[15]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p2 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 4 Season 1") +
+  xlab("Predicted Percipitation")
+
+
+dens.1 <- preds.var[16,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[16]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p3 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 4 Season 2") +
+  xlab("Predicted Percipitation")
+
+
+dens.1 <- preds.var[17,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[17]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p4 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 4 Season 3") +
+  xlab("Predicted Percipitation")
+
+
+figure2 <- multi_panel_figure(columns = 2, rows = 2, panel_label_type = "none")
+figure2 %<>%
+  fill_panel(p1, column = 1, row = 1) %<>%
+  fill_panel(p2, column = 2, row = 1) %<>%
+  fill_panel(p3, column = 1, row = 2) %<>%
+  fill_panel(p4, column = 2, row = 2)
+figure2
+```
+
+$$\\[0.05in]$$
+
+A comparison of the errors of the Delay-Map predictions and VAR predictions will be conducted in a later segment of this report. Overall, the VAR predictions are far more accurate than the ARIMA predictions, and comparable to the Delay-Map predictions. 
+
+$$\\[0.05in]$$
+
+## VAR Modeling with Principal Components 
+
+As a final method of comparison to the Delay-Mapping method, a VAR will again be conducted,  using a transformation of the independent variables into principal components. The first five principal components generated from the training data are used in a VAR (corresponding to roughly 90% of the variance in the training data), as well as the rainfall levels in the VAR. 
+
+A downside of this approach is that the usage of principal components may lessen the ease of interpretability of model drivers; however it may result in a time series model with better predictive accuracy.
+
+$$\\[0.05in]$$
+
+```{r, include=FALSE}
+WeatherTimeSeriesPRCP <- function(df, ref.vars, pred, year.start, year.forward){
+  
+  df.train <- df %>% filter(year < year.start)
+  df.test <- df %>% filter(year >= year.start)
+  
+  df.train <- df.train %>% dplyr::select(-all_of(ref.vars))
+  df.test <- df.test %>% dplyr::select(-all_of(ref.vars))
+  
+  #do principal components
+  PC <- prcomp(df.train %>% dplyr::select(-pred), scale=TRUE)
+  PC$rotation <- -1*PC$rotation
+  
+  df.train.prcp <- PC$x[,1:5]
+  df.train.prcp <- as.data.frame(df.train.prcp) %>% mutate(y = (df.train %>% dplyr::select(pred)))
+  
+  #train the VAR model:
+  y.aic <- VAR(df.train.prcp, type = "const", lag.max = 6, ic = "AIC")
+  
+  #results
+  yhat <- predict(y.aic, n.ahead = 24)
+  return(yhat)
+}
+
+prcp.preds.out <- WeatherTimeSeriesPRCP(fresno_season, c("season", "year"), "F_PRCP", 1990, 6)
+```
+
+```{r, echo=FALSE,  fig.align='center'}
+preds.var <- prcp.preds.out$fcst[[6]]
+plot.df2 <- as.data.frame(cbind(V1=preds.var[,1], V2=1:24)) %>% mutate(Type="Predicted")
+plot.df3 <- as.data.frame(cbind(V1=preds.var[,2], V2=1:24)) %>% mutate(Type="95% Lower Confidence Bound")
+plot.df4 <- as.data.frame(cbind(V1=preds.var[,3], V2=1:24)) %>% mutate(Type="95% Upper Confidence Bound")
+plot.df5 <- as.data.frame(cbind(V1=preds.out[[2]], V2=1:24)) %>% mutate(Type="Actual")
+plot.df <- rbind(plot.df2,plot.df5)
+
+plot.df3 <- rbind(plot.df3, plot.df3)
+plot.df4 <- rbind(plot.df4, plot.df4)
+
+ggplot(plot.df, aes(x=V2, y=V1, colour=Type)) + geom_line() + geom_point() +
+  xlab("Seasons into the Future") + ylab("Precipitation Level")+ scale_color_manual(values=c("red", "blue")) +
+  geom_line(aes(y=plot.df3$V1), linetype = "dashed") + 
+  geom_line(aes(y=plot.df4$V1), linetype = "dashed") +
+    ggtitle("Predicted and Actual Precipitation Levels using Principal Componets VAR",
+          subtitle = "Winter 1990 - Fall 1996")
+
+
+```
+
+$$\\[0.05in]$$
+
+#### Comparison of Delay-Map Predictive Distributions and VAR Predictive Distributions
+```{r, echo=FALSE, warning=FALSE, fig.align='center'}
+library(bayestestR)
+library(magrittr)
+library(multipanelfigure)
+
+dens.1 <- preds.var[1,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[1]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p1 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue") + ggtitle("Year 1 Season 4") +
+  xlab("Predicted Percipitation")
+
+dens.1 <- preds.var[2,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[2]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p2 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 1 Season 1") +
+  xlab("Predicted Percipitation")
+
+
+dens.1 <- preds.var[3,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[3]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p3 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 1 Season 2") +
+  xlab("Predicted Percipitation")
+
+
+dens.1 <- preds.var[4,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[4]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p4 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 1 Season 3") +
+  xlab("Predicted Percipitation")
+
+
+figure1 <- multi_panel_figure(columns = 2, rows = 2, panel_label_type = "none")
+figure1 %<>%
+  fill_panel(p1, column = 1, row = 1) %<>%
+  fill_panel(p2, column = 2, row = 1) %<>%
+  fill_panel(p3, column = 1, row = 2) %<>%
+  fill_panel(p4, column = 2, row = 2)
+figure1
+```
+
+```{r, echo=FALSE, warning=FALSE, fig.align='center'}
+
+library(magrittr)
+library(multipanelfigure)
+
+dens.1 <- preds.var[14,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[14]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p1 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue") + ggtitle("Year 4 Season 4") +
+  xlab("Predicted Percipitation")
+
+dens.1 <- preds.var[15,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[15]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p2 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 4 Season 1") +
+  xlab("Predicted Percipitation")
+
+
+dens.1 <- preds.var[16,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[16]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p3 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 4 Season 2") +
+  xlab("Predicted Percipitation")
+
+
+dens.1 <- preds.var[17,] 
+std.dev <- (dens.1[3]-dens.1[1])/1.96
+dist1 <- rnorm_perfect(600, mean=dens.1[1], sd=std.dev) 
+dens.2 <- preds.per.season[[17]]
+dens.plot.df <- data.frame( Type=c(rep("VAR", 600), rep("Delay-Map", 600)),
+                    value=c(dist1, dens.2))
+
+p4 <- ggplot(dens.plot.df, aes(x=value, color=Type, fill=Type)) + 
+  geom_density(alpha=0.3) + scale_color_manual(values=c("red", "blue"))+
+  geom_vline(xintercept =   preds.out[[2]][[1]],
+  color = "blue")+ ggtitle("Year 4 Season 3") +
+  xlab("Predicted Percipitation")
+
+
+figure2 <- multi_panel_figure(columns = 2, rows = 2, panel_label_type = "none")
+figure2 %<>%
+  fill_panel(p1, column = 1, row = 1) %<>%
+  fill_panel(p2, column = 2, row = 1) %<>%
+  fill_panel(p3, column = 1, row = 2) %<>%
+  fill_panel(p4, column = 2, row = 2)
+figure2
+```
+
+$$\\[0.05in]$$
+
+## Comparison of Errors between Delay-Mapping, VAR, and Principal Components VAR
+
+```{r, include=FALSE}
+
+error.delayMap <- vector()
+error.VAR <- list()
+error.prcp <- list()
+
+for(i in 1980:2000){
+  
+  #### Delay Map Predictions
+  preds.out <- WeatherPredFunc(fresno_season, 6, c("season", "year"), "F_PRCP", i, 6, 30) 
+  
+  preds.per.season <- list()
+
+  #combine the delay map predictions
+  for (j in 1:(6*4)){
+    
+    preds.indiv <- vector()
+    
+    for(k in 1:length(preds.out[[1]])) {
+      
+      preds.indiv <- append(preds.indiv, preds.out[[1]][[k]][[j]])
+    }
+    preds.per.season[[j]] <- preds.indiv
+  }
+  
+  preds.per.season <- lapply(preds.per.season, mean)
+  delay.map.resids <- sum((unlist(mapply('-', preds.per.season, preds.out[[2]], SIMPLIFY = FALSE)))^2)
+  error.delayMap <- c(error.delayMap, delay.map.resids)
+  
+  #### VAR Predictions
+  var.preds.out <- WeatherTimeSeriesVAR(fresno_season, c("season", "year"), "F_PRCP", i, 6)
+  preds.var <- sum(var.preds.out$fcst$F_PRCP[,1]-preds.out[[2]])^2
+  error.VAR <- c(error.VAR, preds.var)
+  
+  #### Principal Components Predictions
+  prc.preds.out <- WeatherTimeSeriesPRCP(fresno_season, c("season", "year"), "F_PRCP", i, 6)
+  prc.preds.var <- sum(prc.preds.out$fcst$y[,1]-preds.out[[2]])^2
+  error.prcp <- c(error.VAR, prc.preds.var)
+}
+```
+
+The Delay-Mapping, VAR, and Principal Components VAR methods will be used to predict the next 6 years of seasonal rainfall after the years 1980-2000. The sum of the residuals squared from each of these methods will be evaluated to rank the three methods.
+
+#### Delay-Mapping Error:
+```{r, echo=FALSE}
+print(sum(error.delayMap))
+```
+
+#### VAR Error:
+```{r, echo=FALSE}
+print(sum(unlist(error.VAR)))
+```
+
+#### Principal Components VAR Error:
+```{r, echo=FALSE}
+print(sum(unlist(error.prcp)))
+```
+
+Overall, the Delay-Mapping method seems to have the lowest sum of squares residuals, making it the most accurate predictive method for this data. The VAR and Principal Components VAR have nearly identical sum of squares residuals . 
+
+$$\\[0.05in]$$
+
+## Conclusion
+Methods of Delay-Mapping, Vector Auto-Regression, and Principal Components Vector Auto-Regression were used to predict future rainfall levels in Fresno California. The Delay-Mapping Method has strengths in its ability to generate non-normal predictive densities for each future season, and exhibited the lowest sum of squares error when compared to the VAR and Principal Components VAR methods. This conclusion reflects its usage as a method of time-series prediction and its ability to capture the future behavior of a dynamic system. The VAR and Principal Components VAR methods' strengths lie in ease of interpretation of the model coefficients; a key difference is their generation of normal predictive distributions as opposed to non-normal distributions.
+
+$$\\[0.05in]$$
